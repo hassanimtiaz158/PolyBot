@@ -1,7 +1,10 @@
 """Fair probability model strategy (S3).
 
-Uses calibrated probability models to estimate P(outcome | market features).
+Placeholder — returns ``NO_SIGNAL`` until a probability model is
+integrated.
 """
+
+from __future__ import annotations
 
 from typing import Any
 
@@ -14,6 +17,9 @@ class ProbabilityStrategy(Strategy):
     name = "probability"
 
     def generate_signal(
-        self, snapshot: dict[str, Any], features: dict[str, Any], context: dict[str, Any]
-    ) -> Signal | None:
-        return None
+        self,
+        features: dict[str, Any],
+        context: dict[str, Any] | None = None,
+    ) -> Signal:
+        market_id: str = features.get("market_id", "unknown")
+        return self._reject(market_id, "Probability model not yet implemented")
