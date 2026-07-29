@@ -1,0 +1,67 @@
+<!-- DEPRECATED: replaced by Streamlit dashboard in app/dashboard/ -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Polymarket Quant Bot — Demo Dashboard</title>
+<style>
+:root{--bg:#08110f;--panel:#0d1916;--panel2:#101f1b;--text:#e7f2ed;--muted:#8fa49d;--line:#20342e;--green:#42d392;--red:#ff6b7a;--amber:#f6c85f}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px Inter,system-ui,sans-serif}.container{max-width:1500px;margin:auto;padding:24px}
+.top{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:20px}h1{font-size:23px;margin:0}.sub,.small{color:var(--muted);margin-top:5px}.badge{border:1px solid #3a594e;border-radius:999px;padding:7px 12px;background:#10231d;color:var(--green);font-weight:700}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:14px}.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:17px;box-shadow:0 10px 30px #0003}.label{color:var(--muted);font-size:12px}.value{font-size:25px;font-weight:750;margin-top:8px}.positive{color:var(--green)}.negative{color:var(--red)}.warning{color:var(--amber)}
+.row{display:grid;grid-template-columns:1.5fr 1fr;gap:14px;margin-bottom:14px}.title{font-weight:700;margin-bottom:14px}.tablewrap{overflow:auto}table{width:100%;border-collapse:collapse;min-width:850px}th,td{padding:11px 9px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}th{color:var(--muted);font-size:11px;text-transform:uppercase}
+.pill{padding:4px 8px;border-radius:999px;font-size:11px;font-weight:700}.buy{background:#103a2b;color:var(--green)}.wait{background:#382e10;color:var(--amber)}.reject{background:#3a1720;color:var(--red)}
+.bar{height:9px;background:#172923;border-radius:99px;overflow:hidden;margin-top:8px}.fill{height:100%;border-radius:99px;background:var(--green)}.fill.amber{background:var(--amber)}.metric{display:flex;justify-content:space-between;margin:14px 0 5px}
+.chart{height:230px;display:flex;align-items:end;gap:6px;padding-top:20px}.barcol{flex:1;background:#214d3c;border-radius:4px 4px 0 0;min-height:12px}.barcol.neg{background:#642a34}
+.controls{display:flex;gap:8px;flex-wrap:wrap}.btn{border:1px solid var(--line);background:var(--panel2);color:var(--text);padding:9px 12px;border-radius:9px;cursor:pointer}.btn.stop{border-color:#73323e;color:#ff8b98}.notice{padding:12px;border:1px solid #6b5723;background:#201c0e;border-radius:10px;color:#f6d77c;margin-bottom:14px}.footer{color:var(--muted);font-size:12px;margin-top:18px}
+@media(max-width:950px){.grid{grid-template-columns:repeat(2,1fr)}.row{grid-template-columns:1fr}}@media(max-width:580px){.grid{grid-template-columns:1fr}.container{padding:14px}}
+</style>
+</head>
+<body><div class="container">
+<div class="top"><div><h1>Polymarket Quant Bot</h1><div class="sub">Risk-first quantitative trading control centre</div></div><div class="badge">● DEMO / PAPER SIMULATION</div></div>
+<div class="notice"><strong>Simulation only.</strong> All prices, positions and P&L below are synthetic. This dashboard does not connect to Polymarket and cannot place real orders.</div>
+<div class="grid">
+<div class="card"><div class="label">Simulated Equity</div><div class="value">£1,024.80</div><div class="small positive">+2.48% since start</div></div>
+<div class="card"><div class="label">Today's P&L</div><div class="value positive">+£12.40</div><div class="small">Risk limit: -£20.00</div></div>
+<div class="card"><div class="label">Open Exposure</div><div class="value">£38.60</div><div class="small">3.8% of equity</div></div>
+<div class="card"><div class="label">Max Drawdown</div><div class="value">1.21%</div><div class="small positive">Below 2% guardrail</div></div>
+</div>
+<div class="row">
+<div class="card"><div class="title">Equity Curve — Synthetic</div><div class="chart" id="chart"></div><div class="small">Last 24 simulated observations</div></div>
+<div class="card"><div class="title">System Health</div>
+<div class="metric"><span>Data freshness</span><strong class="positive">0.8s</strong></div><div class="bar"><div class="fill" style="width:92%"></div></div>
+<div class="metric"><span>CLOB/API health</span><strong class="positive">Healthy</strong></div><div class="bar"><div class="fill" style="width:98%"></div></div>
+<div class="metric"><span>Model service</span><strong class="positive">Ready</strong></div><div class="bar"><div class="fill" style="width:96%"></div></div>
+<div class="metric"><span>Risk utilisation</span><strong>38%</strong></div><div class="bar"><div class="fill amber" style="width:38%"></div></div>
+<div class="controls" style="margin-top:16px"><button class="btn" onclick="alert('Demo mode: no live action taken.')">Pause</button><button class="btn stop" onclick="alert('Demo kill switch activated. No live orders exist.')">Kill Switch</button></div>
+</div></div>
+<div class="card" style="margin-bottom:14px"><div class="title">Active Signals</div><div class="tablewrap"><table><thead><tr><th>Market</th><th>Side</th><th>Exec. Price</th><th>Model P</th><th>Implied P</th><th>Net Edge</th><th>Confidence</th><th>Liquidity</th><th>Decision</th></tr></thead><tbody>
+<tr><td>DEMO-ELECTION-001</td><td>YES</td><td>0.440</td><td>51.8%</td><td>44.0%</td><td class="positive">+6.2%</td><td>78%</td><td>High</td><td><span class="pill buy">PAPER BUY</span></td></tr>
+<tr><td>DEMO-SPORT-014</td><td>NO</td><td>0.610</td><td>63.0%</td><td>61.0%</td><td>+0.8%</td><td>71%</td><td>Medium</td><td><span class="pill wait">WAIT</span></td></tr>
+<tr><td>DEMO-ECON-022</td><td>YES</td><td>0.290</td><td>31.0%</td><td>29.0%</td><td class="negative">-0.6%</td><td>66%</td><td>Low</td><td><span class="pill reject">REJECT</span></td></tr>
+</tbody></table></div></div>
+<div class="row">
+<div class="card"><div class="title">Open Positions — Synthetic</div><div class="tablewrap"><table><thead><tr><th>Market</th><th>Side</th><th>Entry</th><th>Current</th><th>Size</th><th>Unrealised P&L</th></tr></thead><tbody>
+<tr><td>DEMO-ELECTION-001</td><td>YES</td><td>0.438</td><td>0.451</td><td>£12.00</td><td class="positive">+£0.36</td></tr>
+<tr><td>DEMO-SPORT-014</td><td>NO</td><td>0.608</td><td>0.603</td><td>£8.60</td><td class="positive">+£0.07</td></tr>
+<tr><td>DEMO-MACRO-003</td><td>YES</td><td>0.520</td><td>0.515</td><td>£18.00</td><td class="negative">-£0.17</td></tr>
+</tbody></table></div></div>
+<div class="card"><div class="title">Risk Guardrails</div>
+<div class="metric"><span>Daily loss</span><strong>£0 / £20</strong></div><div class="bar"><div class="fill" style="width:0%"></div></div>
+<div class="metric"><span>Market exposure</span><strong>1.2% / 2%</strong></div><div class="bar"><div class="fill" style="width:60%"></div></div>
+<div class="metric"><span>Total exposure</span><strong>3.8% / 5%</strong></div><div class="bar"><div class="fill amber" style="width:76%"></div></div>
+<div class="metric"><span>Consecutive losses</span><strong>1 / 5</strong></div><div class="bar"><div class="fill" style="width:20%"></div></div>
+</div></div>
+<div class="card"><div class="title">Decision Audit</div><div class="tablewrap"><table><thead><tr><th>Time</th><th>Event</th><th>Market</th><th>Result</th><th>Reason</th></tr></thead><tbody>
+<tr><td>14:22:08</td><td>SIGNAL_CREATED</td><td>DEMO-ELECTION-001</td><td>Candidate</td><td>Net edge 6.2%</td></tr>
+<tr><td>14:22:09</td><td>RISK_APPROVED</td><td>DEMO-ELECTION-001</td><td>Approved</td><td>All guardrails passed</td></tr>
+<tr><td>14:21:47</td><td>SIGNAL_REJECTED</td><td>DEMO-ECON-022</td><td>Rejected</td><td>Net edge below threshold</td></tr>
+<tr><td>14:20:11</td><td>DATA_RECEIVED</td><td>DEMO-SPORT-014</td><td>Healthy</td><td>0.7s freshness</td></tr>
+</tbody></table></div></div>
+<div class="footer">Demo UI for the Polymarket Quant Bot PRD/TDD. Synthetic data only. No trading advice or guaranteed-return claim.</div>
+</div>
+<script>
+const vals=[1000,1002,1001,1004,1003,1006,1005,1008,1007,1010,1008,1012,1011,1014,1013,1017,1015,1019,1018,1021,1020,1024,1023,1024.8];
+const min=Math.min(...vals),max=Math.max(...vals);
+document.getElementById('chart').innerHTML=vals.map(v=>`<div class="barcol ${v<vals[0]?'neg':''}" style="height:${20+((v-min)/(max-min))*170}px" title="£${v.toFixed(2)}"></div>`).join('');
+</script></body></html>
