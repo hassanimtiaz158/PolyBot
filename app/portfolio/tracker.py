@@ -1,45 +1,225 @@
-"""Portfolio tracking and P&L calculation."""
+"""Portfolio tracking — positions, P&L, equity, and exposure."""
 
+from __future__ import annotations
+
+import copy
 import logging
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_INITIAL_EQUITY = 10_000.0
+
 
 class PortfolioTracker:
-    """Tracks positions, equity, and P&L across all markets."""
+    """Tracks positions, equity, and P&L across all markets.
 
-    def __init__(self) -> None:
-        self._equity: float = 10000.0
+    * ``add_trade`` with the same side as an existing position →
+      weighted-average entry price.
+    * ``add_trade`` with the opposite side → partial or full close
+      with realised P&L.  In a binary prediction market YES + NO = 1,
+      so the effective exit price for the position is ``1 - price``
+      where *price* is the new trade's fill price.
+    * Realised P&L is accumulated globally and preserved even after
+      a position is fully closed.
+    * Equity = initial_equity + total_realised_pnl + total_unrealised_pnl.
+    """
+
+    def __init__(self, initial_equity: float = _INITIAL_EQUITY) -> None:
+        self._initial_equity = max(0.0, initial_equity)
         self._positions: dict[str, dict[str, Any]] = {}
+        self._total_realised_pnl: float = 0.0
+
+    # ── Properties ─────────────────────────────────────────────────
 
     @property
     def equity(self) -> float:
-        return self._equity
+        return self._initial_equity + self._total_realised_pnl + self.total_unrealised_pnl()
 
-    def update_position(self, position: dict[str, Any]) -> None:
-        """Update or add a position."""
-        self._positions[position["market_id"]] = position
+    @property
+    def initial_equity(self) -> float:
+        return self._initial_equity
+
+    # ── Trade lifecycle ────────────────────────────────────────────
+
+    def add_trade(
+        self,
+        market_id: str,
+        side: str,
+        size: float,
+        price: float,
+        fee: float = 0.0,
+    ) -> None:
+        """Record a filled trade and update the portfolio.
+
+        Parameters
+        ----------
+        market_id : str
+        side : str
+            ``"YES"`` or ``"NO"`` — side of the **new** trade.
+        size : float
+            Number of contracts filled.
+        price : float
+            Effective fill price **in this trade's denomination**:
+            YES price for YES trades, NO price for NO trades.
+        fee : float
+            Total fee paid for this fill.
+        """
+        if size <= 0 or price <= 0:
+            return
+
+        pos = self._positions.get(market_id)
+
+        if pos is None:
+            self._positions[market_id] = {
+                "market_id": market_id,
+                "side": side,
+                "size": size,
+                "average_entry": price,
+                "current_price": price,
+                "realised_pnl": -fee,
+                "unrealised_pnl": 0.0,
+            }
+            self._total_realised_pnl -= fee
+            return
+
+        if pos["side"] == side:
+            self._add_to_position(pos, size, price, fee)
+        else:
+            self._reduce_position(pos, size, price, fee, side)
+
+    def close_position(self, market_id: str, price: float) -> None:
+        """Fully close a position at *price* and realise its P&L.
+
+        *price* is the effective fill price of the **opposite**-side
+        trade that closes the position (e.g. the NO price when closing
+        a YES position).
+        """
+        pos = self._positions.get(market_id)
+        if pos is None or pos["size"] <= 0:
+            return
+        opposite = "YES" if pos["side"] == "NO" else "NO"
+        self._reduce_position(pos, pos["size"], price, fee=0.0, new_side=opposite)
+
+    def update_price(self, market_id: str, current_price: float) -> None:
+        """Mark a position to market.
+
+        *current_price* is the **YES** price of the market.
+        It is automatically converted to the position's denomination.
+        """
+        pos = self._positions.get(market_id)
+        if pos is None or pos["size"] <= 0:
+            return
+        if pos["side"] == "NO":
+            pos["current_price"] = 1.0 - current_price
+        else:
+            pos["current_price"] = current_price
+        pos["unrealised_pnl"] = self._calculate_unrealised(pos)
+
+    # ── Query ──────────────────────────────────────────────────────
+
+    def position_for(self, market_id: str) -> dict[str, Any] | None:
+        """Return a copy of the position dict, or ``None``."""
+        pos = self._positions.get(market_id)
+        return copy.deepcopy(pos) if pos else None
 
     def total_exposure(self) -> float:
-        """Calculate the sum of all position sizes."""
+        """Sum of absolute position sizes."""
         return sum(float(p.get("size", 0)) for p in self._positions.values())
 
-    def unrealised_pnl(self) -> float:
-        """Calculate total unrealised P&L across all positions."""
+    def market_exposure(self, market_id: str) -> float:
+        """Exposure to a single market by ID."""
+        pos = self._positions.get(market_id)
+        return float(pos["size"]) if pos else 0.0
+
+    def num_positions(self) -> int:
+        """Number of open positions (size > 0)."""
+        return sum(1 for p in self._positions.values() if float(p.get("size", 0)) > 0)
+
+    def total_realised_pnl(self) -> float:
+        """Total realised P&L across all trades (persists after close)."""
+        return self._total_realised_pnl
+
+    def total_unrealised_pnl(self) -> float:
         return sum(float(p.get("unrealised_pnl", 0)) for p in self._positions.values())
 
+    def total_pnl(self) -> float:
+        return self.total_realised_pnl() + self.total_unrealised_pnl()
+
+    # ── Legacy compat ──────────────────────────────────────────────
+
+    def update_position(self, position: dict[str, Any]) -> None:
+        """Legacy — update or add a position dict directly."""
+        self._positions[position["market_id"]] = position
+
+    def unrealised_pnl(self) -> float:
+        return self.total_unrealised_pnl()
+
     def realised_pnl(self) -> float:
-        """Calculate total realised P&L."""
-        return sum(float(p.get("realised_pnl", 0)) for p in self._positions.values())
+        return self.total_realised_pnl()
 
     def summary(self) -> dict[str, Any]:
-        """Return a comprehensive portfolio summary."""
         return {
-            "equity": self._equity,
+            "equity": self.equity,
             "total_exposure": self.total_exposure(),
-            "unrealised_pnl": self.unrealised_pnl(),
-            "realised_pnl": self.realised_pnl(),
-            "open_positions": len(self._positions),
-            "positions": self._positions,
+            "unrealised_pnl": self.total_unrealised_pnl(),
+            "realised_pnl": self.total_realised_pnl(),
+            "total_pnl": self.total_pnl(),
+            "open_positions": self.num_positions(),
+            "positions": dict(self._positions),
         }
+
+    # ── Private helpers ────────────────────────────────────────────
+
+    def _add_to_position(
+        self, pos: dict[str, Any], size: float, price: float, fee: float
+    ) -> None:
+        total_size = pos["size"] + size
+        total_cost = pos["size"] * pos["average_entry"] + size * price
+        pos["average_entry"] = total_cost / total_size if total_size > 0 else price
+        pos["size"] = total_size
+        pos["current_price"] = price
+        pos["unrealised_pnl"] = self._calculate_unrealised(pos)
+        pos["realised_pnl"] -= fee
+        self._total_realised_pnl -= fee
+
+    def _reduce_position(
+        self, pos: dict[str, Any], size: float, price: float, fee: float, new_side: str
+    ) -> None:
+        close_size = min(size, pos["size"])
+        entry = pos["average_entry"]
+
+        # Opposite-side trade: the effective exit price for this position
+        # is (1 - new_trade_price) because YES + NO = 1.
+        realised = close_size * ((1.0 - price) - entry) - fee
+
+        pos["size"] -= close_size
+        pos["realised_pnl"] += realised
+        self._total_realised_pnl += realised
+
+        remaining = size - close_size
+        if remaining > 0:
+            # Flip: closing order exceeded the position size
+            self._positions[pos["market_id"]] = {
+                "market_id": pos["market_id"],
+                "side": new_side,
+                "size": remaining,
+                "average_entry": price,
+                "current_price": price,
+                "realised_pnl": pos.get("realised_pnl", 0.0),
+                "unrealised_pnl": 0.0,
+            }
+            return
+
+        if pos["size"] <= 0:
+            del self._positions[pos["market_id"]]
+        else:
+            pos["current_price"] = 1.0 - price
+            pos["unrealised_pnl"] = self._calculate_unrealised(pos)
+
+    @staticmethod
+    def _calculate_unrealised(pos: dict[str, Any]) -> float:
+        size = float(pos["size"])
+        if size <= 0:
+            return 0.0
+        return size * (float(pos["current_price"]) - float(pos["average_entry"]))
