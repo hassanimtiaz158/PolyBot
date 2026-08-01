@@ -11,6 +11,15 @@ from app.backtesting.models import (
     TradeRecord,
 )
 from app.backtesting.report import ReportGenerator
+from app.backtesting.walk_forward import (
+    WalkForwardDiagnostics,
+    WalkForwardReport,
+    WalkForwardReporter,
+    WalkForwardValidator,
+    WalkForwardWindow,
+    WindowMetrics,
+    split_windows,
+)
 
 __all__ = [
     "BacktestEngine",
@@ -22,4 +31,11 @@ __all__ = [
     "BacktestResult",
     "MetricsCalculator",
     "ReportGenerator",
+    "WalkForwardValidator",
+    "WalkForwardWindow",
+    "WalkForwardReport",
+    "WalkForwardDiagnostics",
+    "WalkForwardReporter",
+    "WindowMetrics",
+    "split_windows",
 ]

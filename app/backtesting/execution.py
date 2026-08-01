@@ -18,6 +18,7 @@ correctly reflects the economic reality.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from app.backtesting.models import MarketSnapshot
 from app.portfolio.tracker import PortfolioTracker
@@ -52,7 +53,7 @@ class BacktestExecution:
         snapshot: MarketSnapshot,
         edge: float | None = None,
         signal_id: str | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Execute a trade at the given historical snapshot's prices.
 
         Parameters

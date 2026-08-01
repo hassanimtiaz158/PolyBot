@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
-import time as time_module
+from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, Callable
+from typing import Any
 
 from app.backtesting.execution import BacktestExecution
 from app.backtesting.metrics import MetricsCalculator
@@ -15,10 +15,9 @@ from app.backtesting.models import (
     FillRecord,
     MarketSnapshot,
 )
-from app.config.settings import settings
 from app.portfolio.tracker import PortfolioTracker
 from app.risk.engine import RiskEngine
-from app.strategies.base import Signal, Strategy, StrategyDecision
+from app.strategies.base import Strategy, StrategyDecision
 
 logger = logging.getLogger(__name__)
 

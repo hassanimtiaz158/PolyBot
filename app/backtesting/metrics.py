@@ -7,7 +7,6 @@ fills, trades, and equity curve.  No look-ahead possible.
 from __future__ import annotations
 
 import math
-from typing import Any
 
 from app.backtesting.models import BacktestResult, EquityPoint, FillRecord, TradeRecord
 

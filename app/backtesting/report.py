@@ -12,7 +12,7 @@ import logging
 import os
 from typing import Any
 
-from app.backtesting.models import BacktestResult, EquityPoint, FillRecord
+from app.backtesting.models import BacktestResult
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +139,7 @@ class ReportGenerator:
 
     @staticmethod
     def _write_csv(path: str, result: BacktestResult) -> None:
-        metrics = {
+        metrics: dict[str, list[Any]] = {
             "metric": [
                 "initial_equity",
                 "final_equity",
