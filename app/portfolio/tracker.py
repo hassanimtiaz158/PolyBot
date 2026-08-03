@@ -1,10 +1,24 @@
-"""Portfolio tracking — positions, P&L, equity, and exposure."""
+"""Portfolio tracking — positions, P&L, equity, and exposure.
+
+Beyond per-market P&L, the tracker exposes portfolio-level exposure
+queries used by the risk engine to prevent excessive concentration:
+
+* ``total_exposure``        — sum of all position sizes.
+* ``market_exposure``       — exposure to a single market.
+* ``strategy_exposure``     — exposure attributable to one strategy.
+* ``exposure_for``          — exposure across a set of markets
+  (used for correlated-event and resolution-time aggregation).
+* ``directional_exposure``  — signed exposure to an underlying event,
+  where each market carries a direction: ``+1`` means YES on the
+  market = the event occurs, ``-1`` means YES = the event does NOT
+  occur.
+"""
 
 from __future__ import annotations
 
 import copy
 import logging
-from typing import Any
+from typing import Any, Iterable, Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +63,7 @@ class PortfolioTracker:
         size: float,
         price: float,
         fee: float = 0.0,
+        strategy: str = "",
     ) -> None:
         """Record a filled trade and update the portfolio.
 
@@ -64,6 +79,9 @@ class PortfolioTracker:
             YES price for YES trades, NO price for NO trades.
         fee : float
             Total fee paid for this fill.
+        strategy : str
+            Name of the strategy that opened the position.  Used to
+            attribute exposure per strategy.
         """
         if size <= 0 or price <= 0:
             return
@@ -79,6 +97,7 @@ class PortfolioTracker:
                 "current_price": price,
                 "realised_pnl": -fee,
                 "unrealised_pnl": 0.0,
+                "strategy": strategy,
             }
             self._total_realised_pnl -= fee
             return
@@ -131,6 +150,53 @@ class PortfolioTracker:
         """Exposure to a single market by ID."""
         pos = self._positions.get(market_id)
         return float(pos["size"]) if pos else 0.0
+
+    def strategy_exposure(self, strategy: str) -> float:
+        """Total position size opened by a strategy.
+
+        Positions opened without a strategy label (``""``) are
+        counted under that empty label only.
+        """
+        return sum(
+            float(p.get("size", 0))
+            for p in self._positions.values()
+            if p.get("strategy", "") == strategy
+        )
+
+    def exposure_for(self, market_ids: Iterable[str]) -> float:
+        """Total position size across a set of markets.
+
+        Used to aggregate correlated exposure: markets that depend on
+        the same underlying event, or markets that resolve at the same
+        time, are passed together so their sizes sum into one bucket.
+        Duplicate market ids are naturally counted once (dict lookup).
+        """
+        return sum(
+            float(p.get("size", 0))
+            for market_id in set(market_ids)
+            if (p := self._positions.get(market_id)) is not None
+        )
+
+    def directional_exposure(
+        self, market_directions: Mapping[str, float]
+    ) -> float:
+        """Signed exposure to an underlying event.
+
+        Each market maps to a direction: ``+1`` when YES on that
+        market means the event occurs, ``-1`` when YES means the
+        event does NOT occur.  A YES position contributes
+        ``+direction``, a NO position ``-direction``.  Offsetting
+        positions (e.g. YES on the ``+1`` market and YES on the
+        ``-1`` market) therefore cancel out as hedges.
+        """
+        total = 0.0
+        for market_id, direction in market_directions.items():
+            pos = self._positions.get(market_id)
+            if pos is None:
+                continue
+            side_sign = 1.0 if pos.get("side") == "YES" else -1.0
+            total += direction * side_sign * float(pos.get("size", 0))
+        return total
 
     def num_positions(self) -> int:
         """Number of open positions (size > 0)."""
@@ -208,6 +274,7 @@ class PortfolioTracker:
                 "current_price": price,
                 "realised_pnl": pos.get("realised_pnl", 0.0),
                 "unrealised_pnl": 0.0,
+                "strategy": pos.get("strategy", ""),
             }
             return
 

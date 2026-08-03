@@ -41,6 +41,19 @@ class Settings(BaseSettings):
     min_confidence: float = 0.70
     data_max_age_seconds: int = 5
 
+    # ── Portfolio-level limits (concentration) ──────────────────────
+    # Cap on exposure to markets that depend on the same underlying
+    # event (correlated exposure).  If multiple markets share an event,
+    # their sizes sum into one bucket before comparison.
+    max_event_exposure_pct: float = 0.03
+    # Cap on exposure attributable to a single strategy.
+    max_strategy_exposure_pct: float = 0.04
+    # Cap on |signed| exposure to an event's direction: YES on the
+    # +1 market and NO on the -1 market both bet the event occurs.
+    max_directional_exposure_pct: float = 0.03
+    # Cap on exposure to markets resolving at the same time.
+    max_resolution_exposure_pct: float = 0.05
+
     # ── Data collection ─────────────────────────────────────────────
     market_scan_interval_seconds: int = 300
 

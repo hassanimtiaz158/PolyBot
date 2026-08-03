@@ -6,8 +6,10 @@ Flow
 2. Check system health: circuit breaker, data freshness, data validity.
 3. Check trade parameters: spread, liquidity, net edge, confidence.
 4. Check portfolio limits: position size, exposures, daily loss, etc.
-5. Compute position size (conservative fixed-risk only).
-6. Return a ``RiskDecision`` — single machine-readable ``reason``.
+5. Check correlated exposure: event, strategy, directional, resolution
+   (markets sharing an underlying event or resolution time are one bucket).
+6. Compute position size (conservative fixed-risk only).
+7. Return a ``RiskDecision`` — single machine-readable ``reason``.
 
 Invariants
 ----------
@@ -24,6 +26,7 @@ from typing import Any
 
 from app.portfolio.tracker import PortfolioTracker
 from app.risk.circuit_breaker import BreakerState, CircuitBreaker
+from app.risk.correlation import CorrelationRegistry, PortfolioRiskLimits
 from app.risk.limits import RiskLimits
 from app.risk.position_sizing import PositionSizer
 from app.strategies.base import Signal, StrategyDecision
@@ -89,6 +92,13 @@ class RiskEngine:
         Conservative position size calculator.  Created fresh when ``None``.
     breaker : CircuitBreaker
         Circuit breaker state.  Created fresh when ``None``.
+    registry : CorrelationRegistry
+        Maps markets to underlying events, directions, and resolution
+        times for correlated-exposure checks.  Created fresh when
+        ``None`` (every market treated as its own event).
+    portfolio_limits : PortfolioRiskLimits
+        Portfolio-level concentration limit checker.  Created fresh
+        when ``None``.
     """
 
     def __init__(
@@ -97,11 +107,15 @@ class RiskEngine:
         limits: RiskLimits | None = None,
         sizer: PositionSizer | None = None,
         breaker: CircuitBreaker | None = None,
+        registry: CorrelationRegistry | None = None,
+        portfolio_limits: PortfolioRiskLimits | None = None,
     ) -> None:
         self._portfolio = portfolio
         self._limits = limits or RiskLimits()
         self._sizer = sizer or PositionSizer()
         self._breaker = breaker or CircuitBreaker()
+        self._registry = registry or CorrelationRegistry()
+        self._portfolio_limits = portfolio_limits or PortfolioRiskLimits()
 
     # ── Public API ───────────────────────────────────────────────────
 
@@ -286,6 +300,112 @@ class RiskEngine:
                 },
             )
 
+        # ── 5. Correlation & portfolio concentration ─────────────────
+        # Markets that depend on the same underlying event, or that
+        # resolve at the same time, are correlated exposure.  When the
+        # combined exposure would exceed the portfolio-level limit the
+        # bot prefers NO TRADE over breaking the limit.
+
+        event_id = self._registry.event_for(signal.market_id)
+        direction = self._registry.direction_for(signal.market_id)
+        event_markets = self._registry.markets_in_event(event_id)
+        side_sign = 1.0 if signal.side == "YES" else -1.0
+
+        event_exposure = self._portfolio.exposure_for(event_markets) + proposed_size
+        event_reason = self._portfolio_limits.check_event_exposure(
+            event_exposure, equity,
+        )
+        if event_reason:
+            return self._reject(
+                signal, event_reason,
+                net_edge=net_edge,
+                breaker_state=breaker_state.value,
+                risk_metrics={
+                    "equity": equity,
+                    "proposed_size": proposed_size,
+                    "event_exposure": event_exposure,
+                    "strategy_exposure": (
+                        self._portfolio.strategy_exposure(signal.strategy)
+                        + proposed_size
+                    ),
+                    "directional_exposure": 0.0,
+                    "open_positions": float(open_positions),
+                },
+            )
+
+        strategy_exposure = (
+            self._portfolio.strategy_exposure(signal.strategy) + proposed_size
+        )
+        strategy_reason = self._portfolio_limits.check_strategy_exposure(
+            strategy_exposure, equity,
+        )
+        if strategy_reason:
+            return self._reject(
+                signal, strategy_reason,
+                net_edge=net_edge,
+                breaker_state=breaker_state.value,
+                risk_metrics={
+                    "equity": equity,
+                    "proposed_size": proposed_size,
+                    "event_exposure": event_exposure,
+                    "strategy_exposure": strategy_exposure,
+                    "directional_exposure": 0.0,
+                    "open_positions": float(open_positions),
+                },
+            )
+
+        directional_exposure = (
+            self._portfolio.directional_exposure(event_markets)
+            + direction * side_sign * proposed_size
+        )
+        direction_reason = self._portfolio_limits.check_directional_exposure(
+            directional_exposure, equity,
+        )
+        if direction_reason:
+            return self._reject(
+                signal, direction_reason,
+                net_edge=net_edge,
+                breaker_state=breaker_state.value,
+                risk_metrics={
+                    "equity": equity,
+                    "proposed_size": proposed_size,
+                    "event_exposure": event_exposure,
+                    "strategy_exposure": strategy_exposure,
+                    "directional_exposure": directional_exposure,
+                    "open_positions": float(open_positions),
+                },
+            )
+
+        resolution_time = self._registry.resolution_time_for(signal.market_id)
+        resolution_exposure = 0.0
+        if resolution_time is not None:
+            resolution_exposure = (
+                self._portfolio.exposure_for(
+                    self._registry.markets_with_resolution(resolution_time),
+                )
+                + proposed_size
+            )
+            resolution_reason = (
+                self._portfolio_limits.check_resolution_concentration(
+                    resolution_exposure, equity,
+                )
+            )
+            if resolution_reason:
+                return self._reject(
+                    signal, resolution_reason,
+                    net_edge=net_edge,
+                    breaker_state=breaker_state.value,
+                    risk_metrics={
+                        "equity": equity,
+                        "proposed_size": proposed_size,
+                        "event_exposure": event_exposure,
+                        "strategy_exposure": strategy_exposure,
+                        "directional_exposure": directional_exposure,
+                        "resolution_exposure": resolution_exposure,
+                        "open_positions": float(open_positions),
+                    },
+                )
+
         # ── Approved ──────────────────────────────────────────────────
         return RiskDecision(
             approved=True,
@@ -309,6 +429,10 @@ class RiskEngine:
                     (daily_pnl / equity * 100) if equity > 0 else 0.0
                 ),
                 "consecutive_losses": float(consecutive_losses),
+                "event_exposure": event_exposure,
+                "strategy_exposure": strategy_exposure,
+                "directional_exposure": directional_exposure,
+                "resolution_exposure": resolution_exposure,
             },
             breaker_state=breaker_state.value,
         )
