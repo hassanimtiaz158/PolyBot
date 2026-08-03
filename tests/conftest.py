@@ -12,14 +12,6 @@ from app.storage.db import Database, db
 from app.storage.models import Market, MarketSnapshot, Order, Position, RiskEvent, Signal
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create a single event loop for the test session."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
-
-
 @pytest_asyncio.fixture
 async def test_db() -> AsyncGenerator[Database, None]:
     """Create a temporary in-memory SQLite database for testing.

@@ -28,6 +28,10 @@ FRESH_TS = NOW.isoformat()
 STALE_TS = (NOW - timedelta(seconds=60)).isoformat()
 FUTURE_TS = (NOW + timedelta(hours=1)).isoformat()
 
+# FRESH_TS is computed at module import; a long-running suite can take
+# minutes, so fresh-timestamp assertions use a window no suite can exceed.
+FRESH_MAX_AGE_SECONDS = 60 * 60
+
 
 def make_snapshot(
     bid: float | None = 0.45,
@@ -184,7 +188,7 @@ class TestOrderBookFeaturesTopNDepth:
 
 class TestOrderBookFeaturesDataFreshness:
     def test_fresh_timestamp(self) -> None:
-        assert OrderBookFeatures.data_freshness(FRESH_TS, max_age_seconds=30) is True
+        assert OrderBookFeatures.data_freshness(FRESH_TS, max_age_seconds=FRESH_MAX_AGE_SECONDS) is True
 
     def test_stale_timestamp(self) -> None:
         assert OrderBookFeatures.data_freshness(STALE_TS, max_age_seconds=10) is False
@@ -543,7 +547,7 @@ class TestMarketQualityTimeToResolution:
 
 class TestMarketQualityDataFreshness:
     def test_fresh(self) -> None:
-        assert MarketQuality.data_freshness(FRESH_TS, max_age_seconds=30) is True
+        assert MarketQuality.data_freshness(FRESH_TS, max_age_seconds=FRESH_MAX_AGE_SECONDS) is True
 
     def test_stale(self) -> None:
         assert MarketQuality.data_freshness(STALE_TS, max_age_seconds=10) is False
@@ -668,7 +672,7 @@ class TestFeatureValidator:
             "composite_score": 0.75,
             "timestamp": FRESH_TS,
         }
-        result = FeatureValidator.validate(features, max_age_seconds=30)
+        result = FeatureValidator.validate(features, max_age_seconds=FRESH_MAX_AGE_SECONDS)
         assert len(result["errors"]) == 0
 
     def test_missing_timestamp(self) -> None:
@@ -682,34 +686,34 @@ class TestFeatureValidator:
 
     def test_bid_outside_range(self) -> None:
         features = {"bid": 1.50, "timestamp": FRESH_TS}
-        result = FeatureValidator.validate(features, max_age_seconds=30)
+        result = FeatureValidator.validate(features, max_age_seconds=FRESH_MAX_AGE_SECONDS)
         assert any("bid" in e for e in result["errors"])
 
     def test_negative_depth(self) -> None:
         features = {"bid_depth": -100.0, "timestamp": FRESH_TS}
-        result = FeatureValidator.validate(features, max_age_seconds=30)
+        result = FeatureValidator.validate(features, max_age_seconds=FRESH_MAX_AGE_SECONDS)
         assert any("negative" in e for e in result["errors"])
 
     def test_extreme_return_warning(self) -> None:
         features = {"return_5s": 15.0, "timestamp": FRESH_TS}
-        result = FeatureValidator.validate(features, max_age_seconds=30)
+        result = FeatureValidator.validate(features, max_age_seconds=FRESH_MAX_AGE_SECONDS)
         assert len(result["errors"]) == 0
         assert any("return" in w and "extreme" in w for w in result["warnings"])
 
     def test_extreme_velocity_warning(self) -> None:
         features = {"velocity_60s": 0.5, "timestamp": FRESH_TS}
-        result = FeatureValidator.validate(features, max_age_seconds=30)
+        result = FeatureValidator.validate(features, max_age_seconds=FRESH_MAX_AGE_SECONDS)
         assert any("velocity" in w for w in result["warnings"])
 
     def test_negative_volatility_error(self) -> None:
         features = {"realised_volatility": -0.1, "timestamp": FRESH_TS}
-        result = FeatureValidator.validate(features, max_age_seconds=30)
+        result = FeatureValidator.validate(features, max_age_seconds=FRESH_MAX_AGE_SECONDS)
         assert any("negative" in e for e in result["errors"])
 
     def test_is_valid_returns_bool(self) -> None:
         good = {"midpoint": 0.50, "timestamp": FRESH_TS}
         bad = {"midpoint": 1.50, "timestamp": FRESH_TS}
-        assert FeatureValidator.is_valid(good, max_age_seconds=30) is True
+        assert FeatureValidator.is_valid(good, max_age_seconds=FRESH_MAX_AGE_SECONDS) is True
         assert FeatureValidator.is_valid(bad, max_age_seconds=30) is False
 
     def test_has_timestamp(self) -> None:
@@ -718,15 +722,15 @@ class TestFeatureValidator:
 
     def test_obi_outside_range(self) -> None:
         features = {"obi": 1.5, "timestamp": FRESH_TS}
-        result = FeatureValidator.validate(features, max_age_seconds=30)
+        result = FeatureValidator.validate(features, max_age_seconds=FRESH_MAX_AGE_SECONDS)
         assert any("OBI" in e for e in result["errors"])
 
     def test_spread_outside_range(self) -> None:
         features = {"absolute_spread": 2.0, "timestamp": FRESH_TS}
-        result = FeatureValidator.validate(features, max_age_seconds=30)
+        result = FeatureValidator.validate(features, max_age_seconds=FRESH_MAX_AGE_SECONDS)
         assert any("Spread" in e for e in result["errors"])
 
     def test_non_numeric_value(self) -> None:
         features = {"midpoint": "abc", "timestamp": FRESH_TS}
-        result = FeatureValidator.validate(features, max_age_seconds=30)
+        result = FeatureValidator.validate(features, max_age_seconds=FRESH_MAX_AGE_SECONDS)
         assert any("not numeric" in e for e in result["errors"])

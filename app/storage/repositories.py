@@ -28,10 +28,30 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+class _QueryMixin:
+    """Shared helpers for parameterised SELECT and COUNT queries."""
+
+    _db: Database
+
+    async def _fetch_rows(
+        self, sql: str, params: tuple[object, ...] = ()
+    ) -> list[dict[str, object]]:
+        cursor = await self._db.conn.execute(sql, params)
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def _fetch_count(
+        self, sql: str, params: tuple[object, ...] = ()
+    ) -> int:
+        cursor = await self._db.conn.execute(sql, params)
+        row = await cursor.fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
+
+
 # ── MarketRepository ────────────────────────────────────────────────
 
 
-class MarketRepository:
+class MarketRepository(_QueryMixin):
     """CRUD for the ``markets`` table."""
 
     def __init__(self, db: Database | None = None) -> None:
@@ -105,6 +125,33 @@ class MarketRepository:
         cursor = await self._db.conn.execute("SELECT COUNT(*) FROM markets")
         row = await cursor.fetchone()
         return row[0] if row else 0
+
+    async def list_paginated(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        status: str | None = None,
+    ) -> tuple[list[Market], int]:
+        """Return a page of markets and the total number of matches.
+
+        ``status`` filters on the market ``status`` column when provided.
+        """
+        if status:
+            sql = (
+                "SELECT * FROM markets WHERE status = ? "
+                "ORDER BY updated_at DESC LIMIT ? OFFSET ?"
+            )
+            rows = await self._fetch_rows(sql, (status, limit, offset))
+            total = await self._fetch_count(
+                "SELECT COUNT(*) FROM markets WHERE status = ?", (status,)
+            )
+        else:
+            rows = await self._fetch_rows(
+                "SELECT * FROM markets ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            )
+            total = await self._fetch_count("SELECT COUNT(*) FROM markets")
+        return [Market.from_row(r) for r in rows], total
 
 
 # ── SnapshotRepository ──────────────────────────────────────────────
@@ -182,7 +229,7 @@ class SnapshotRepository:
 # ── SignalRepository ────────────────────────────────────────────────
 
 
-class SignalRepository:
+class SignalRepository(_QueryMixin):
     """CRUD for the ``signals`` table."""
 
     def __init__(self, db: Database | None = None) -> None:
@@ -254,11 +301,46 @@ class SignalRepository:
         row = await cursor.fetchone()
         return row[0] if row else 0
 
+    async def list_paginated(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        market_id: str | None = None,
+        strategy: str | None = None,
+        decision: str | None = None,
+    ) -> tuple[list[Signal], int]:
+        """Return a page of signals and the total number of matches.
+
+        Filters combine with AND semantics; each is applied only when
+        a non-None value is provided.
+        """
+        clauses: list[str] = []
+        params: list[object] = []
+        if market_id:
+            clauses.append("market_id = ?")
+            params.append(market_id)
+        if strategy:
+            clauses.append("strategy = ?")
+            params.append(strategy)
+        if decision:
+            clauses.append("decision = ?")
+            params.append(decision)
+        where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
+        rows = await self._fetch_rows(
+            f"SELECT * FROM signals {where}"
+            "ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+            (*params, limit, offset),
+        )
+        total = await self._fetch_count(
+            f"SELECT COUNT(*) FROM signals {where}", tuple(params)
+        )
+        return [Signal.from_row(r) for r in rows], total
+
 
 # ── OrderRepository ─────────────────────────────────────────────────
 
 
-class OrderRepository:
+class OrderRepository(_QueryMixin):
     """CRUD for the ``orders`` table."""
 
     def __init__(self, db: Database | None = None) -> None:
@@ -338,11 +420,49 @@ class OrderRepository:
         rows = await cursor.fetchall()
         return [Order.from_row(dict(r)) for r in rows]
 
+    async def list_paginated(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        market_id: str | None = None,
+        status: str | None = None,
+    ) -> tuple[list[Order], int]:
+        """Return a page of orders and the total number of matches."""
+        clauses: list[str] = []
+        params: list[object] = []
+        if market_id:
+            clauses.append("market_id = ?")
+            params.append(market_id)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
+        rows = await self._fetch_rows(
+            f"SELECT * FROM orders {where}"
+            "ORDER BY submitted_at DESC LIMIT ? OFFSET ?",
+            (*params, limit, offset),
+        )
+        total = await self._fetch_count(
+            f"SELECT COUNT(*) FROM orders {where}", tuple(params)
+        )
+        return [Order.from_row(r) for r in rows], total
+
+    async def count(self) -> int:
+        """Return the total number of orders."""
+        return await self._fetch_count("SELECT COUNT(*) FROM orders")
+
+    async def count_filled(self) -> int:
+        """Return the number of orders in a filled (or partially filled) state."""
+        return await self._fetch_count(
+            "SELECT COUNT(*) FROM orders WHERE status IN "
+            "('FILLED', 'PARTIALLY_FILLED')"
+        )
+
 
 # ── PositionRepository ──────────────────────────────────────────────
 
 
-class PositionRepository:
+class PositionRepository(_QueryMixin):
     """CRUD for the ``positions`` table."""
 
     def __init__(self, db: Database | None = None) -> None:
@@ -406,11 +526,60 @@ class PositionRepository:
         row = await cursor.fetchone()
         return float(row[0]) if row else 0.0
 
+    async def list_paginated(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        side: str | None = None,
+        open_only: bool = True,
+    ) -> tuple[list[Position], int]:
+        """Return a page of positions and the total number of matches.
+
+        ``open_only`` restricts results to positions with ``size > 0``.
+        """
+        clauses: list[str] = []
+        params: list[object] = []
+        if side:
+            clauses.append("side = ?")
+            params.append(side)
+        if open_only:
+            clauses.append("size > 0")
+        where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
+        rows = await self._fetch_rows(
+            f"SELECT * FROM positions {where}ORDER BY market_id "
+            "LIMIT ? OFFSET ?",
+            (*params, limit, offset),
+        )
+        total = await self._fetch_count(
+            f"SELECT COUNT(*) FROM positions {where}", tuple(params)
+        )
+        return [Position.from_row(r) for r in rows], total
+
+    async def count(self, open_only: bool = False) -> int:
+        """Return the number of position records (optionally open only)."""
+        if open_only:
+            return await self._fetch_count(
+                "SELECT COUNT(*) FROM positions WHERE size > 0"
+            )
+        return await self._fetch_count("SELECT COUNT(*) FROM positions")
+
+    async def pnl_summary(self) -> dict[str, float]:
+        """Return realised/unrealised P&L totals across all positions."""
+        cursor = await self._db.conn.execute(
+            "SELECT COALESCE(SUM(realised_pnl), 0), "
+            "COALESCE(SUM(unrealised_pnl), 0) FROM positions"
+        )
+        row = await cursor.fetchone()
+        return {
+            "total_realised_pnl": float(row[0]) if row else 0.0,
+            "total_unrealised_pnl": float(row[1]) if row else 0.0,
+        }
+
 
 # ── RiskEventRepository ─────────────────────────────────────────────
 
 
-class RiskEventRepository:
+class RiskEventRepository(_QueryMixin):
     """CRUD for the ``risk_events`` table."""
 
     def __init__(self, db: Database | None = None) -> None:
@@ -464,6 +633,33 @@ class RiskEventRepository:
         )
         row = await cursor.fetchone()
         return row[0] if row else 0
+
+    async def list_paginated(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        event_type: str | None = None,
+        severity: str | None = None,
+    ) -> tuple[list[RiskEvent], int]:
+        """Return a page of risk events and the total number of matches."""
+        clauses: list[str] = []
+        params: list[object] = []
+        if event_type:
+            clauses.append("event_type = ?")
+            params.append(event_type)
+        if severity:
+            clauses.append("severity = ?")
+            params.append(severity)
+        where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
+        rows = await self._fetch_rows(
+            f"SELECT * FROM risk_events {where}"
+            "ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+            (*params, limit, offset),
+        )
+        total = await self._fetch_count(
+            f"SELECT COUNT(*) FROM risk_events {where}", tuple(params)
+        )
+        return [RiskEvent.from_row(r) for r in rows], total
 
 
 # ── Singleton instances ─────────────────────────────────────────────
