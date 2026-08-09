@@ -22,7 +22,6 @@ Key design decisions
 from __future__ import annotations
 
 import logging
-import pickle
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -439,7 +438,9 @@ class ProbabilityModel:
     # ── Serialization ───────────────────────────────────────────────
 
     def save(self, path: str) -> None:
-        """Serialize the model to disk."""
+        """Serialise the model to disk."""
+        from app.models._security import safe_dump
+
         state = {
             "version": self.version,
             "model_type": self.model_type,
@@ -453,14 +454,14 @@ class ProbabilityModel:
             "model_id": self._model_id,
             "training_date": self._training_date,
         }
-        with open(path, "wb") as f:
-            pickle.dump(state, f)
+        safe_dump(state, path)
 
     @classmethod
     def load(cls, path: str) -> ProbabilityModel:
         """Load a serialised model from disk."""
-        with open(path, "rb") as f:
-            state = pickle.load(f)
+        from app.models._security import safe_load
+
+        state = safe_load(path)
         obj = cls(
             model_type=state["model_type"],
             features=state["features"],

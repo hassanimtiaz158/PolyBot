@@ -8,7 +8,6 @@ calibration error (ECE), and reliability-diagram data.
 from __future__ import annotations
 
 import math
-import pickle
 from dataclasses import dataclass
 
 import numpy as np
@@ -227,19 +226,21 @@ class Calibrator:
 
     def save(self, path: str) -> None:
         """Serialize the calibrator to disk."""
+        from app.models._security import safe_dump
+
         state = {
             "version": self.version,
             "method": self.method,
             "calibrator": self._calibrator,
         }
-        with open(path, "wb") as f:
-            pickle.dump(state, f)
+        safe_dump(state, path)
 
     @classmethod
     def load(cls, path: str) -> Calibrator:
         """Deserialize a calibrator from disk."""
-        with open(path, "rb") as f:
-            state = pickle.load(f)
+        from app.models._security import safe_load
+
+        state = safe_load(path)
         obj = cls(method=state["method"])
         obj._calibrator = state["calibrator"]
         obj._fitted = state["calibrator"] is not None

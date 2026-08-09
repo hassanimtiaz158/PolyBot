@@ -3,11 +3,16 @@
 Exposes health, status, and database-backed listing endpoints.  The API
 is strictly read-only: there are no order-submission or configuration
 mutation endpoints, and no credentials are ever serialized.
+
+When ``POLY_API_KEY`` is set in the environment, all requests must include
+an ``X-API-Key`` header matching that value.  When unset (research mode),
+authentication is bypassed.
 """
 
 from __future__ import annotations
 
 import logging
+import secrets
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -18,6 +23,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -32,11 +38,15 @@ from app.api.routes import (
     signals,
     status,
 )
+from app.config.settings import settings
 from app.storage.db import Database, DatabaseError
 
 logger = logging.getLogger(__name__)
 
 API_VERSION = "1.0.0"
+
+# Paths that are always public (no auth required).
+_PUBLIC_PATHS = frozenset({"/health", "/docs", "/openapi.json", "/redoc"})
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -68,6 +78,37 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             request_id,
         )
         return response
+
+
+class APIKeyAuthMiddleware(BaseHTTPMiddleware):
+    """Optional API key authentication middleware.
+
+    When ``POLY_API_KEY`` is set, all requests (except public paths) must
+    include an ``X-API-Key`` header matching the configured value.
+    Timing-safe comparison is used to prevent timing attacks.
+    """
+
+    def __init__(self, app: Any, api_key: str | None = None) -> None:
+        super().__init__(app)
+        self._api_key = api_key
+
+    async def dispatch(self, request: Request, call_next: Any) -> Any:
+        if self._api_key is None:
+            return await call_next(request)
+
+        if request.url.path in _PUBLIC_PATHS:
+            return await call_next(request)
+
+        provided_key = request.headers.get("X-API-Key", "")
+        if not provided_key or not secrets.compare_digest(
+            provided_key, self._api_key
+        ):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "invalid or missing API key"},
+            )
+
+        return await call_next(request)
 
 
 def _request_id(request: Request) -> str:
@@ -120,6 +161,21 @@ def create_app(database: Database | None = None) -> FastAPI:
 
     app.state.db = database or Database()
     app.state.started_at = None
+
+    # CORS — restrict to known origins in production.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["GET"],
+        allow_headers=["*"],
+    )
+
+    # API key authentication (bypassed when POLY_API_KEY is not set).
+    app.add_middleware(
+        APIKeyAuthMiddleware,
+        api_key=settings.poly_api_key,
+    )
 
     app.add_middleware(RequestLoggingMiddleware)
 
