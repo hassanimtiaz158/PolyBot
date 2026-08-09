@@ -19,7 +19,7 @@ venv/
 *.db-journal
 *.db-wal
 *.db-shm
-data/
+/data/
 
 # ── Secrets / Credentials ──────────────────────────────────────────
 *.pem

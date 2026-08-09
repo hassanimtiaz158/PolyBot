@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     # ── Operating mode ──────────────────────────────────────────────
     mode: str = "RESEARCH"
 
+    # ── Live trading gate (default OFF) ─────────────────────────────
+    live_trading_enabled: bool = False
+
     # ── Polymarket API (optional — may be empty for research/demo) ──
     poly_api_key: str | None = None
     poly_secret: str | None = None
