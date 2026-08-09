@@ -92,7 +92,24 @@ CREATE TABLE IF NOT EXISTS risk_events (
     event_type TEXT NOT NULL,
     severity TEXT NOT NULL,
     details TEXT,
-    timestamp TEXT NOT NULL
+    timestamp TEXT NOT NULL,
+    market_id TEXT,
+    strategy TEXT,
+    decision TEXT,
+    reason TEXT
+);
+
+CREATE TABLE IF NOT EXISTS audit_events (
+    event_id TEXT PRIMARY KEY,
+    timestamp TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    market_id TEXT,
+    strategy TEXT,
+    decision TEXT,
+    reason TEXT,
+    details TEXT,
+    source TEXT
 );
 
 CREATE TABLE IF NOT EXISTS circuit_breaker_state (
@@ -118,6 +135,17 @@ CREATE INDEX IF NOT EXISTS idx_positions_open
 MIGRATIONS: dict[int, str] = {
     # Version 2: add condition_id to markets (already handled by v1 schema above)
     2: "ALTER TABLE markets ADD COLUMN condition_id TEXT;",
+    # Version 3: add audit fields and index to risk_events (and audit_events new table)
+    3: """
+        ALTER TABLE risk_events ADD COLUMN market_id TEXT;
+        ALTER TABLE risk_events ADD COLUMN strategy TEXT;
+        ALTER TABLE risk_events ADD COLUMN decision TEXT;
+        ALTER TABLE risk_events ADD COLUMN reason TEXT;
+        CREATE INDEX IF NOT EXISTS idx_risk_events_type_ts
+            ON risk_events(event_type, timestamp);
+        CREATE INDEX IF NOT EXISTS idx_risk_events_event_type
+            ON risk_events(event_type);
+    """,
 }
 
 

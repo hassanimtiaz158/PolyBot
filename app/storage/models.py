@@ -168,6 +168,10 @@ class RiskEvent:
     severity: str
     details: str | None = None
     timestamp: str | None = None
+    market_id: str | None = None
+    strategy: str | None = None
+    decision: str | None = None
+    reason: str | None = None
 
     @classmethod
     def from_row(cls, row: dict[str, Any]) -> "RiskEvent":
@@ -177,4 +181,8 @@ class RiskEvent:
             severity=row["severity"],
             details=row.get("details"),
             timestamp=row.get("timestamp"),
+            market_id=row.get("market_id"),
+            strategy=row.get("strategy"),
+            decision=row.get("decision"),
+            reason=row.get("reason"),
         )

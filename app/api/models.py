@@ -82,6 +82,10 @@ class RiskEventResponse(_EntityModel):
     severity: str
     details: str | None = None
     timestamp: str | None = None
+    market_id: str | None = None
+    strategy: str | None = None
+    decision: str | None = None
+    reason: str | None = None
 
 
 # ── Pagination ──────────────────────────────────────────────────────

@@ -60,6 +60,19 @@ class Settings(BaseSettings):
     # ── Monitoring ──────────────────────────────────────────────────
     health_check_interval_seconds: int = 30
 
+    # ── Alerting (optional adapter) ─────────────────────────────────
+    # Alerts are disabled by default.  Enable alerting and optionally
+    # provide a webhook URL to receive notifications.  No credentials
+    # are ever included in alert payloads or logs.
+    alert_enabled: bool = False
+    alert_webhook_url: str | None = None
+    # Minimum seconds between two alerts with the same key (de-dupe).
+    alert_min_interval_seconds: float = 60.0
+    # Escalate when the same alert key fires this many times inside the
+    # repeat window (repeated-errors detection).
+    alert_repeat_threshold: int = 5
+    alert_repeat_window_seconds: float = 300.0
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
