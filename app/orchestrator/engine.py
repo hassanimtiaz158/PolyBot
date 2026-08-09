@@ -172,6 +172,8 @@ class Orchestrator:
                         await self._bus.data_received(market_id=market_id)
             except Exception as exc:
                 logger.exception("Data provider failed: %s", exc)
+                # Trigger circuit breaker on data provider failure
+                await self._breaker.trigger("DATA_PROVIDER_ERROR", severity="SOFT")
                 await self._bus.emit(
                     "DATA_STALE",
                     reason=f"data provider error: {exc}",
@@ -179,11 +181,14 @@ class Orchestrator:
                 return
 
         # Emit stale data event if data freshness check failed
+        # (skip if already halted to avoid redundant alerts)
         if not health_status.is_healthy("data_freshness"):
-            await self._bus.emit(
-                "DATA_STALE",
-                reason="data freshness check failed",
-            )
+            state_val = str(self._breaker.state)
+            if state_val != "HALTED":
+                await self._bus.emit(
+                    "DATA_STALE",
+                    reason="data freshness check failed",
+                )
 
         all_results: list[PipelineResult] = []
         for market_id, features in market_features.items():

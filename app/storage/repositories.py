@@ -347,9 +347,13 @@ class OrderRepository(_QueryMixin):
         self._db = db or _db
 
     async def insert(self, order: Order) -> None:
-        """Insert a new order record."""
+        """Insert a new order record.
+
+        If the order_id already exists the insert is silently ignored
+        (idempotent — prevents duplicate orders on retry).
+        """
         await self._db.conn.execute(
-            """INSERT INTO orders
+            """INSERT OR IGNORE INTO orders
                (order_id, market_id, side, requested_price, requested_size,
                 status, filled_size, average_fill, submitted_at, completed_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -594,9 +598,20 @@ class RiskEventRepository(_QueryMixin):
         timestamp = event.timestamp or _now()
         await self._db.conn.execute(
             "INSERT OR IGNORE INTO risk_events "
-            "(event_id, event_type, severity, details, timestamp) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (event.event_id, event.event_type, event.severity, event.details, timestamp),
+            "(event_id, event_type, severity, details, timestamp, "
+            "market_id, strategy, decision, reason) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                event.event_id,
+                event.event_type,
+                event.severity,
+                event.details,
+                timestamp,
+                event.market_id,
+                event.strategy,
+                event.decision,
+                event.reason,
+            ),
         )
         await self._db.conn.commit()
 

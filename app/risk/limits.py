@@ -62,11 +62,26 @@ class RiskLimits:
         return _ok()
 
     def check_data_validity(self, features: dict[str, Any]) -> LimitCheck:
-        """Reject if required fields are missing or invalid."""
+        """Reject if required fields are missing or invalid.
+
+        Validates: presence, numeric type, finite values, and positive
+        midpoint/spread/bid/ask.  NaN or Inf in any field is rejected.
+        """
         required = ["market_id", "midpoint", "spread", "bid", "ask"]
         for field in required:
             val = features.get(field)
             if val is None:
+                return _fail("INVALID_DATA")
+        # Validate numeric fields are finite
+        for field in ("midpoint", "spread", "bid", "ask"):
+            val = features.get(field)
+            if isinstance(val, (int, float)) and not (
+                val == val  # NaN check
+                and val != float("inf")
+                and val != float("-inf")
+            ):
+                return _fail("INVALID_DATA")
+            if isinstance(val, (int, float)) and val < 0:
                 return _fail("INVALID_DATA")
         return _ok()
 

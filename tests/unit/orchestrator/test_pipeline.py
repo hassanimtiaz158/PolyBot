@@ -8,6 +8,7 @@ import pytest
 
 from app.ev.expected_value import ExpectedValueEngine
 from app.execution.engine import ExecutionEngine, OrderResult
+from app.monitoring.health import health_status
 from app.orchestrator.pipeline import PipelineResult, TradePipeline
 from app.portfolio.tracker import PortfolioTracker
 from app.risk.engine import RiskDecision, RiskEngine
@@ -18,6 +19,17 @@ from app.storage.repositories import (
     SignalRepository,
 )
 from app.strategies.base import Signal, StrategyDecision
+
+
+@pytest.fixture(autouse=True)
+def _healthy_health_status():
+    """Ensure health_status is healthy before each pipeline test."""
+    health_status.set_healthy("data_freshness")
+    health_status.set_healthy("api")
+    health_status.set_healthy("database")
+    health_status.set_healthy("model_availability")
+    yield
+    health_status.checks.clear()
 
 
 @pytest.fixture

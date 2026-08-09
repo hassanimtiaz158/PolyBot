@@ -57,6 +57,8 @@ class CircuitBreaker:
         self._triggered_at: str | None = None
         self._persist_enabled = persist
         self._event_bus: object | None = None
+        self._daily_pnl: float = 0.0
+        self._consecutive_losses: int = 0
 
     def set_event_bus(self, bus: object) -> None:
         """Set the event bus for emitting circuit breaker events.
@@ -243,6 +245,8 @@ class CircuitBreaker:
                 "state": self._state.value,
                 "reasons": self._reasons,
                 "triggered_at": self._triggered_at,
+                "daily_pnl": self._daily_pnl,
+                "consecutive_losses": self._consecutive_losses,
             })
             now = datetime.now(UTC).isoformat()
             await db.conn.execute(
@@ -255,7 +259,11 @@ class CircuitBreaker:
             logger.exception("Failed to persist circuit breaker state")
 
     async def load_state(self) -> None:
-        """Load persisted state from the database."""
+        """Load persisted state from the database.
+
+        Restores daily_pnl and consecutive_losses so risk limits
+        survive process restarts.
+        """
         if not self._persist_enabled:
             return
         try:
@@ -271,6 +279,8 @@ class CircuitBreaker:
                 self._state = BreakerState(data.get("state", "NORMAL"))
                 self._reasons = data.get("reasons", [])
                 self._triggered_at = data.get("triggered_at")
+                self._daily_pnl = float(data.get("daily_pnl", 0.0))
+                self._consecutive_losses = int(data.get("consecutive_losses", 0))
                 if self._state != BreakerState.NORMAL:
                     logger.warning(
                         "Loaded circuit breaker state: %s (%s)",

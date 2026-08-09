@@ -16,11 +16,13 @@ Invariants
 * If ``RiskDecision.approved is False``, execution MUST NEVER occur.
 * Every rejection includes a machine-readable ``reason`` string.
 * No component can bypass the risk engine.
+* NaN/Inf values in any numeric field cause immediate rejection.
 """
 
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -163,6 +165,22 @@ class RiskEngine:
                 net_edge=net_edge,
             )
 
+        # ── 1b. Validate signal numeric fields ────────────────────────
+        # Reject NaN/Inf in any numeric field that could corrupt sizing.
+        for field_name, value in [
+            ("model_probability", signal.model_probability),
+            ("implied_probability", signal.implied_probability),
+            ("gross_edge", signal.gross_edge),
+            ("confidence", signal.confidence),
+            ("net_edge", net_edge),
+        ]:
+            if value is not None and not math.isfinite(value):
+                return self._reject(
+                    signal, "INVALID_NUMERIC",
+                    net_edge=net_edge,
+                    reason_suffix=f"NaN/Inf in {field_name}",
+                )
+
         # ── 2. System health ──────────────────────────────────────────
 
         if not api_healthy:
@@ -255,6 +273,14 @@ class RiskEngine:
             liquidity=feat.get("liquidity_score", float("inf")),
             risk_limit=equity * 0.25,
         )
+
+        # Validate proposed size is finite and positive
+        if not math.isfinite(proposed_size) or proposed_size <= 0:
+            return self._reject(
+                signal, "POSITION_SIZE_ZERO",
+                net_edge=net_edge,
+                breaker_state=breaker_state.value,
+            )
 
         # Position size check
         size_check = self._limits.check_position_size(proposed_size, equity)
@@ -446,18 +472,20 @@ class RiskEngine:
         net_edge: float | None = None,
         breaker_state: str | None = None,
         risk_metrics: dict[str, float] | None = None,
+        reason_suffix: str = "",
     ) -> RiskDecision:
         """Build a rejected RiskDecision with the given reason."""
+        full_reason = f"{reason}: {reason_suffix}" if reason_suffix else reason
         logger.info(
             "RiskEngine rejected %s/%s: %s",
-            signal.market_id, signal.side, reason,
+            signal.market_id, signal.side, full_reason,
         )
         return RiskDecision(
             approved=False,
             market_id=signal.market_id,
             side=signal.side,
             size=0.0,
-            reason=reason,
+            reason=full_reason,
             signal_id=signal.signal_id,
             net_edge=net_edge,
             risk_metrics=risk_metrics or {},

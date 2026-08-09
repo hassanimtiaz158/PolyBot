@@ -1,6 +1,7 @@
 """Application settings loaded from environment variables and .env file."""
 
 
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -28,50 +29,37 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_format: str = "structured"
 
-    # ── Risk limits (conservative defaults) ────────────────────────
-    max_position_pct: float = 0.01
-    max_market_exposure_pct: float = 0.02
-    max_total_exposure_pct: float = 0.05
-    max_daily_loss_pct: float = 0.02
-    max_consecutive_losses: int = 5
-    max_open_positions: int = 10
-    max_spread: float = 0.03
-    min_liquidity: float = 1000.0
-    min_net_edge: float = 0.05
-    min_confidence: float = 0.70
-    data_max_age_seconds: int = 5
+    # ── Risk limits (conservative defaults — all non-negative) ─────
+    max_position_pct: float = Field(default=0.01, ge=0.0, le=1.0)
+    max_market_exposure_pct: float = Field(default=0.02, ge=0.0, le=1.0)
+    max_total_exposure_pct: float = Field(default=0.05, ge=0.0, le=1.0)
+    max_daily_loss_pct: float = Field(default=0.02, ge=0.0, le=1.0)
+    max_consecutive_losses: int = Field(default=5, ge=0)
+    max_open_positions: int = Field(default=10, ge=0)
+    max_spread: float = Field(default=0.03, ge=0.0, le=1.0)
+    min_liquidity: float = Field(default=1000.0, ge=0.0)
+    min_net_edge: float = Field(default=0.05, ge=0.0)
+    min_confidence: float = Field(default=0.70, ge=0.0, le=1.0)
+    data_max_age_seconds: int = Field(default=5, ge=1)
 
     # ── Portfolio-level limits (concentration) ──────────────────────
-    # Cap on exposure to markets that depend on the same underlying
-    # event (correlated exposure).  If multiple markets share an event,
-    # their sizes sum into one bucket before comparison.
-    max_event_exposure_pct: float = 0.03
-    # Cap on exposure attributable to a single strategy.
-    max_strategy_exposure_pct: float = 0.04
-    # Cap on |signed| exposure to an event's direction: YES on the
-    # +1 market and NO on the -1 market both bet the event occurs.
-    max_directional_exposure_pct: float = 0.03
-    # Cap on exposure to markets resolving at the same time.
-    max_resolution_exposure_pct: float = 0.05
+    max_event_exposure_pct: float = Field(default=0.03, ge=0.0, le=1.0)
+    max_strategy_exposure_pct: float = Field(default=0.04, ge=0.0, le=1.0)
+    max_directional_exposure_pct: float = Field(default=0.03, ge=0.0, le=1.0)
+    max_resolution_exposure_pct: float = Field(default=0.05, ge=0.0, le=1.0)
 
     # ── Data collection ─────────────────────────────────────────────
-    market_scan_interval_seconds: int = 300
+    market_scan_interval_seconds: int = Field(default=300, ge=1)
 
     # ── Monitoring ──────────────────────────────────────────────────
-    health_check_interval_seconds: int = 30
+    health_check_interval_seconds: int = Field(default=30, ge=1)
 
     # ── Alerting (optional adapter) ─────────────────────────────────
-    # Alerts are disabled by default.  Enable alerting and optionally
-    # provide a webhook URL to receive notifications.  No credentials
-    # are ever included in alert payloads or logs.
     alert_enabled: bool = False
     alert_webhook_url: str | None = None
-    # Minimum seconds between two alerts with the same key (de-dupe).
-    alert_min_interval_seconds: float = 60.0
-    # Escalate when the same alert key fires this many times inside the
-    # repeat window (repeated-errors detection).
-    alert_repeat_threshold: int = 5
-    alert_repeat_window_seconds: float = 300.0
+    alert_min_interval_seconds: float = Field(default=60.0, ge=0.0)
+    alert_repeat_threshold: int = Field(default=5, ge=1)
+    alert_repeat_window_seconds: float = Field(default=300.0, ge=1.0)
 
     model_config = {
         "env_file": ".env",

@@ -211,6 +211,23 @@ class TradePipeline:
         await self._bus.risk_decision(risk_decision, approved=True)
 
         # ── Stage 3: Execution ───────────────────────────────────────
+        # Re-verify data freshness right before execution (fail-closed)
+        if not health_status.is_healthy("data_freshness"):
+            result = PipelineResult(
+                signal=signal,
+                ev_result=ev_result,
+                risk_decision=risk_decision,
+                error="Data became stale before execution",
+            )
+            await self._persist_signal(signal, net_edge=net_edge)
+            await self._persist_risk_event(risk_decision)
+            await self._bus.signal_rejected(
+                market_id=signal.market_id,
+                strategy=signal.strategy,
+                reason="Data became stale before execution",
+            )
+            return result
+
         order_result: OrderResult | None = None
         try:
             order_result = await self._exec.execute(risk_decision)
@@ -343,15 +360,12 @@ class TradePipeline:
     async def _update_portfolio(self, result: OrderResult) -> None:
         if result.filled_size <= 0:
             return
-        try:
-            self._portfolio.update_position({
-                "market_id": result.market_id,
-                "side": result.side,
-                "size": result.filled_size,
-                "average_entry": result.average_fill,
-                "current_price": result.average_fill,
-                "realised_pnl": 0.0,
-                "unrealised_pnl": 0.0,
-            })
-        except Exception:
-            logger.exception("Failed to update portfolio for %s", result.market_id)
+        self._portfolio.update_position({
+            "market_id": result.market_id,
+            "side": result.side,
+            "size": result.filled_size,
+            "average_entry": result.average_fill,
+            "current_price": result.average_fill,
+            "realised_pnl": 0.0,
+            "unrealised_pnl": 0.0,
+        })
