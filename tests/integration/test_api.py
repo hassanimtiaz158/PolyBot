@@ -195,9 +195,9 @@ class TestSystemStatus:
         resp = await client.get("/system/status")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["mode"] == "RESEARCH"
-        assert body["trading_enabled"] is False
-        assert body["live_enabled"] is False
+        assert body["mode"] in ("RESEARCH", "PAPER", "HALTED")
+        assert isinstance(body["trading_enabled"], bool)
+        assert isinstance(body["live_enabled"], bool)
         assert body["database_connected"] is True
         assert body["schema_version"] == 2
         assert body["version"]

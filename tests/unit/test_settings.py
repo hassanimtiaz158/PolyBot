@@ -1,11 +1,15 @@
 """Unit tests for configuration settings."""
 
+import os
+
 from app.config.settings import Settings
 
 
 class TestSettings:
-    def test_default_mode(self):
-        s = Settings()
+    def test_default_mode(self, monkeypatch):
+        monkeypatch.delenv("MODE", raising=False)
+        # pydantic-settings reads .env; construct without env file to test code default
+        s = Settings(_env_file=None)
         assert s.mode == "RESEARCH"
 
     def test_default_risk_limits(self):

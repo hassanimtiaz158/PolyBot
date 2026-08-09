@@ -1,0 +1,420 @@
+{
+  "evaluation_period": {
+    "start": "2026-08-09T18:32:37.460309+00:00",
+    "end": "2026-08-09T18:33:54.817579+00:00",
+    "duration_hours": 0.02,
+    "iterations": 3
+  },
+  "signals": {
+    "total": 11,
+    "rejected": 45,
+    "rejected_pct": 409.09,
+    "rejection_reasons": {
+      "micro": 34,
+      "EV": 11
+    }
+  },
+  "trades": {
+    "filled": 0,
+    "fills": []
+  },
+  "pnl": {
+    "initial_equity": 10000.0,
+    "final_equity": 10000.0,
+    "net_pnl": 0.0,
+    "net_pnl_pct": 0.0
+  },
+  "risk": {
+    "max_drawdown": 0.0,
+    "max_drawdown_pct": 0.0
+  },
+  "performance": {
+    "hit_rate": 0,
+    "avg_net_edge": 0,
+    "avg_confidence": 0.8088
+  },
+  "execution_quality": {
+    "avg_slippage": 0
+  },
+  "data_quality": {
+    "markets_scanned": 45,
+    "api_errors": 0,
+    "error_details": []
+  },
+  "market_snapshots": [
+    {
+      "market_id": "559651",
+      "question": "Xi Jinping out before 2027?",
+      "midpoint": 0.0445,
+      "spread": 0.0010000000000000009,
+      "obi": 0.7267893889990048,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559652",
+      "question": "Will Gavin Newsom win the 2028 Democratic presidential nomin",
+      "midpoint": 0.1815,
+      "spread": 0.0010000000000000009,
+      "obi": -0.6375425799332,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559653",
+      "question": "Will Alexandria Ocasio-Cortez win the 2028 Democratic presid",
+      "midpoint": 0.1505,
+      "spread": 0.0010000000000000009,
+      "obi": -0.6664205018787234,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559654",
+      "question": "Will Pete Buttigieg win the 2028 Democratic presidential nom",
+      "midpoint": 0.0525,
+      "spread": 0.0010000000000000009,
+      "obi": -0.6183592272227926,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559655",
+      "question": "Will Josh Shapiro win the 2028 Democratic presidential nomin",
+      "midpoint": 0.0495,
+      "spread": 0.0010000000000000009,
+      "obi": -0.613280114585726,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559656",
+      "question": "Will Wes Moore win the 2028 Democratic presidential nominati",
+      "midpoint": 0.014499999999999999,
+      "spread": 0.0009999999999999992,
+      "obi": -0.2933844211872504,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559657",
+      "question": "Will Stephen A. Smith win the 2028 Democratic presidential n",
+      "midpoint": 0.0045000000000000005,
+      "spread": 0.001,
+      "obi": -0.4200931976414084,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559658",
+      "question": "Will Kamala Harris win the 2028 Democratic presidential nomi",
+      "midpoint": 0.0755,
+      "spread": 0.0010000000000000009,
+      "obi": -0.5368685656987889,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559659",
+      "question": "Will Gretchen Whitmer win the 2028 Democratic presidential n",
+      "midpoint": 0.0115,
+      "spread": 0.0010000000000000009,
+      "obi": -0.18283296694618456,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559660",
+      "question": "Will Andy Beshear win the 2028 Democratic presidential nomin",
+      "midpoint": 0.0235,
+      "spread": 0.0010000000000000009,
+      "obi": -0.28015650886784177,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559661",
+      "question": "Will Jon Ossoff win the 2028 Democratic presidential nominat",
+      "midpoint": 0.1605,
+      "spread": 0.0010000000000000009,
+      "obi": -0.5015897917514734,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559662",
+      "question": "Will Mark Cuban win the 2028 Democratic presidential nominat",
+      "midpoint": 0.0055,
+      "spread": 0.001,
+      "obi": -0.11820245123514055,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559663",
+      "question": "Will J.B. Pritzker win the 2028 Democratic presidential nomi",
+      "midpoint": 0.010499999999999999,
+      "spread": 0.0009999999999999992,
+      "obi": -0.2770123446423391,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559664",
+      "question": "Will Raphael Warnock win the 2028 Democratic presidential no",
+      "midpoint": 0.006500000000000001,
+      "spread": 0.001,
+      "obi": 0.053077596346217365,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559665",
+      "question": "Will Cory Booker win the 2028 Democratic presidential nomina",
+      "midpoint": 0.0055,
+      "spread": 0.001,
+      "obi": -0.0735680396202023,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559651",
+      "question": "Xi Jinping out before 2027?",
+      "midpoint": 0.0445,
+      "spread": 0.0010000000000000009,
+      "obi": 0.7267894692745469,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559652",
+      "question": "Will Gavin Newsom win the 2028 Democratic presidential nomin",
+      "midpoint": 0.1815,
+      "spread": 0.0010000000000000009,
+      "obi": -0.6375425799332,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559653",
+      "question": "Will Alexandria Ocasio-Cortez win the 2028 Democratic presid",
+      "midpoint": 0.1505,
+      "spread": 0.0010000000000000009,
+      "obi": -0.6664269088601339,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559654",
+      "question": "Will Pete Buttigieg win the 2028 Democratic presidential nom",
+      "midpoint": 0.0525,
+      "spread": 0.0010000000000000009,
+      "obi": -0.6183592272227926,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559655",
+      "question": "Will Josh Shapiro win the 2028 Democratic presidential nomin",
+      "midpoint": 0.0495,
+      "spread": 0.0010000000000000009,
+      "obi": -0.613280114585726,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559656",
+      "question": "Will Wes Moore win the 2028 Democratic presidential nominati",
+      "midpoint": 0.014499999999999999,
+      "spread": 0.0009999999999999992,
+      "obi": -0.29348641434345163,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559657",
+      "question": "Will Stephen A. Smith win the 2028 Democratic presidential n",
+      "midpoint": 0.0045000000000000005,
+      "spread": 0.001,
+      "obi": -0.420368945695439,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559658",
+      "question": "Will Kamala Harris win the 2028 Democratic presidential nomi",
+      "midpoint": 0.0755,
+      "spread": 0.0010000000000000009,
+      "obi": -0.5368685656987889,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559659",
+      "question": "Will Gretchen Whitmer win the 2028 Democratic presidential n",
+      "midpoint": 0.0115,
+      "spread": 0.0010000000000000009,
+      "obi": -0.18283296694618456,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559660",
+      "question": "Will Andy Beshear win the 2028 Democratic presidential nomin",
+      "midpoint": 0.0235,
+      "spread": 0.0010000000000000009,
+      "obi": -0.28015650886784177,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559661",
+      "question": "Will Jon Ossoff win the 2028 Democratic presidential nominat",
+      "midpoint": 0.1605,
+      "spread": 0.0010000000000000009,
+      "obi": -0.5016749095113278,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559662",
+      "question": "Will Mark Cuban win the 2028 Democratic presidential nominat",
+      "midpoint": 0.0055,
+      "spread": 0.001,
+      "obi": -0.11820245123514055,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559663",
+      "question": "Will J.B. Pritzker win the 2028 Democratic presidential nomi",
+      "midpoint": 0.010499999999999999,
+      "spread": 0.0009999999999999992,
+      "obi": -0.2770123446423391,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559664",
+      "question": "Will Raphael Warnock win the 2028 Democratic presidential no",
+      "midpoint": 0.006500000000000001,
+      "spread": 0.001,
+      "obi": 0.05264459109552573,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559665",
+      "question": "Will Cory Booker win the 2028 Democratic presidential nomina",
+      "midpoint": 0.0055,
+      "spread": 0.001,
+      "obi": -0.0735680396202023,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559651",
+      "question": "Xi Jinping out before 2027?",
+      "midpoint": 0.0445,
+      "spread": 0.0010000000000000009,
+      "obi": 0.7267893889990048,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559652",
+      "question": "Will Gavin Newsom win the 2028 Democratic presidential nomin",
+      "midpoint": 0.1815,
+      "spread": 0.0010000000000000009,
+      "obi": -0.6383832077007191,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559653",
+      "question": "Will Alexandria Ocasio-Cortez win the 2028 Democratic presid",
+      "midpoint": 0.1505,
+      "spread": 0.0010000000000000009,
+      "obi": -0.6664195445927528,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559654",
+      "question": "Will Pete Buttigieg win the 2028 Democratic presidential nom",
+      "midpoint": 0.0525,
+      "spread": 0.0010000000000000009,
+      "obi": -0.6183592272227926,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559655",
+      "question": "Will Josh Shapiro win the 2028 Democratic presidential nomin",
+      "midpoint": 0.0495,
+      "spread": 0.0010000000000000009,
+      "obi": -0.613280114585726,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559656",
+      "question": "Will Wes Moore win the 2028 Democratic presidential nominati",
+      "midpoint": 0.014499999999999999,
+      "spread": 0.0009999999999999992,
+      "obi": -0.29343542144604917,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559657",
+      "question": "Will Stephen A. Smith win the 2028 Democratic presidential n",
+      "midpoint": 0.0045000000000000005,
+      "spread": 0.001,
+      "obi": -0.420368945695439,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559658",
+      "question": "Will Kamala Harris win the 2028 Democratic presidential nomi",
+      "midpoint": 0.0755,
+      "spread": 0.0010000000000000009,
+      "obi": -0.5368653226274352,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559659",
+      "question": "Will Gretchen Whitmer win the 2028 Democratic presidential n",
+      "midpoint": 0.0115,
+      "spread": 0.0010000000000000009,
+      "obi": -0.18283296694618456,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559660",
+      "question": "Will Andy Beshear win the 2028 Democratic presidential nomin",
+      "midpoint": 0.0235,
+      "spread": 0.0010000000000000009,
+      "obi": -0.28015650886784177,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559661",
+      "question": "Will Jon Ossoff win the 2028 Democratic presidential nominat",
+      "midpoint": 0.1605,
+      "spread": 0.0010000000000000009,
+      "obi": -0.5016653866634206,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559662",
+      "question": "Will Mark Cuban win the 2028 Democratic presidential nominat",
+      "midpoint": 0.0055,
+      "spread": 0.001,
+      "obi": -0.11820245123514055,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559663",
+      "question": "Will J.B. Pritzker win the 2028 Democratic presidential nomi",
+      "midpoint": 0.010499999999999999,
+      "spread": 0.0009999999999999992,
+      "obi": -0.27663505362137686,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559664",
+      "question": "Will Raphael Warnock win the 2028 Democratic presidential no",
+      "midpoint": 0.006500000000000001,
+      "spread": 0.001,
+      "obi": 0.055095458551584146,
+      "liq": 0.6970000000000001
+    },
+    {
+      "market_id": "559665",
+      "question": "Will Cory Booker win the 2028 Democratic presidential nomina",
+      "midpoint": 0.0055,
+      "spread": 0.001,
+      "obi": -0.07347472137857344,
+      "liq": 0.6970000000000001
+    }
+  ],
+  "equity_curve": [
+    {
+      "equity": 10000.0,
+      "ts": "2026-08-09T18:32:37.460309+00:00"
+    },
+    {
+      "equity": 10000.0,
+      "ts": "2026-08-09T18:33:13.613978+00:00"
+    },
+    {
+      "equity": 10000.0,
+      "ts": "2026-08-09T18:33:48.618939+00:00"
+    }
+  ]
+}
