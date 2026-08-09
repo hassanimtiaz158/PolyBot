@@ -12,6 +12,9 @@ Flow
 The engine is **adapter-agnostic** — it delegates all exchange interaction to
 the ``ExecutionAdapter`` interface, so it works identically for paper trading
 and live execution.
+
+Execution health is tracked via :class:`ExecutionHealthCheck` so the
+monitoring subsystem can detect adapter failures early.
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from typing import Any
 
 from app.execution.interface import ExecutionAdapter
 from app.execution.state_machine import OrderState, OrderStateMachine
+from app.monitoring.health import checks as health_checks
 from app.risk.engine import RiskDecision
 
 logger = logging.getLogger(__name__)
@@ -102,6 +106,9 @@ class OrderResult:
 class ExecutionEngine:
     """Orchestrates the full order lifecycle from risk decision to fill.
 
+    Tracks execution health via the ``execution`` health check so that
+    consecutive adapter failures are surfaced to the monitoring subsystem.
+
     Parameters
     ----------
     adapter : ExecutionAdapter
@@ -110,6 +117,7 @@ class ExecutionEngine:
 
     def __init__(self, adapter: ExecutionAdapter) -> None:
         self._adapter = adapter
+        self._exec_health = health_checks.get("execution")
 
     async def execute(self, decision: RiskDecision) -> OrderResult:
         """Execute a risk-approved decision through the full order lifecycle.
@@ -187,8 +195,14 @@ class ExecutionEngine:
         # Submit to adapter
         try:
             raw_result = await self._adapter.submit(payload)
+            # Record success for execution health check
+            if self._exec_health is not None:
+                self._exec_health.record_success()
         except Exception as exc:
             logger.exception("Adapter submission failed for %s", order_id)
+            # Record failure for execution health check
+            if self._exec_health is not None:
+                self._exec_health.record_error()
             return OrderResult(
                 order_id=order_id,
                 market_id=request.market_id,

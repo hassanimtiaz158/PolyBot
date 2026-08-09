@@ -16,6 +16,9 @@ HALTED  → NORMAL   **only** via explicit operator clear (never auto-reset)
 State is persisted to SQLite so it survives a restart.  On startup the
 system loads the persisted state and stays HALTED until the operator
 explicitly clears breakers.
+
+Every state transition is emitted as a structured ``CIRCUIT_BREAKER``
+audit event via the :class:`EventBus`.
 """
 
 from __future__ import annotations
@@ -53,6 +56,15 @@ class CircuitBreaker:
         self._reasons: list[str] = []
         self._triggered_at: str | None = None
         self._persist_enabled = persist
+        self._event_bus: object | None = None
+
+    def set_event_bus(self, bus: object) -> None:
+        """Set the event bus for emitting circuit breaker events.
+
+        Avoids circular import by accepting a generic object and checking
+        for the ``emit`` method at runtime.
+        """
+        self._event_bus = bus
 
     # ── Properties ──────────────────────────────────────────────────────
 
@@ -101,6 +113,7 @@ class CircuitBreaker:
         if reason in self._reasons:
             return self._state
 
+        previous_state = self._state
         self._reasons.append(reason)
         self._triggered_at = datetime.now(UTC).isoformat()
 
@@ -112,11 +125,20 @@ class CircuitBreaker:
             self._state = BreakerState.HALTED
 
         logger.warning(
-            "Circuit breaker %s → %s (reason=%s)",
-            self._state,
-            self._state,
+            "Circuit breaker %s → %s (reason=%s, severity=%s)",
+            previous_state.value,
+            self._state.value,
             reason,
+            severity,
         )
+
+        # Emit audit event
+        await self._emit_event(
+            previous_state=previous_state,
+            reason=reason,
+            severity=severity,
+        )
+
         await self._persist()
         return self._state
 
@@ -129,19 +151,31 @@ class CircuitBreaker:
             self._reasons.remove(reason)
             logger.info("Circuit breaker cleared: %s", reason)
 
+        previous_state = self._state
         if not self._reasons:
             self._state = BreakerState.NORMAL
             self._triggered_at = None
+            await self._emit_event(
+                previous_state=previous_state,
+                reason=f"cleared: {reason}",
+                severity="INFO",
+            )
 
         await self._persist()
         return self._state
 
     async def clear_all(self) -> BreakerState:
         """Clear all triggers and reset to NORMAL."""
+        previous_state = self._state
         self._reasons.clear()
         self._state = BreakerState.NORMAL
         self._triggered_at = None
         logger.info("All circuit breakers cleared — state → NORMAL")
+        await self._emit_event(
+            previous_state=previous_state,
+            reason="all cleared",
+            severity="INFO",
+        )
         await self._persist()
         return self._state
 
@@ -170,6 +204,32 @@ class CircuitBreaker:
             await self.trigger("CONSECUTIVE_LOSSES", severity="HARD")
 
         return self._state
+
+    # ── Event emission ───────────────────────────────────────────────────
+
+    async def _emit_event(
+        self,
+        previous_state: BreakerState,
+        reason: str,
+        severity: str,
+    ) -> None:
+        """Emit a CIRCUIT_BREAKER audit event via the event bus."""
+        if self._event_bus is None:
+            return
+        emit_fn = getattr(self._event_bus, "emit", None)
+        if emit_fn is None:
+            return
+        try:
+            await emit_fn(
+                "CIRCUIT_BREAKER",
+                decision=self._state.value,
+                reason=reason,
+                previous_state=previous_state.value,
+                severity=severity if severity != "INFO" else None,
+                triggered_at=self._triggered_at,
+            )
+        except Exception:
+            logger.debug("Failed to emit circuit breaker event", exc_info=True)
 
     # ── Persistence ─────────────────────────────────────────────────────
 

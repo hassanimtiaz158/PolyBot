@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from app.audit.events import EventBus
 from app.config.settings import settings
 from app.ev.costs import CostEstimator
 from app.ev.expected_value import ExpectedValueEngine
@@ -53,12 +54,17 @@ class Application:
             else OperatingMode.HALTED
         )
         self._orchestrator: Orchestrator | None = None
+        self._event_bus: EventBus | None = None
 
     async def startup(self) -> None:
         """Initialise database, health checks, and the orchestrator."""
         logger.info("Starting Polymarket Quant Bot", extra={"mode": self.mode_mode.mode.value})
         await db.init_schema()
         await run_all_checks()
+
+        # ── Event bus ──────────────────────────────────────────────
+        risk_repo = RiskEventRepository()
+        self._event_bus = EventBus(repo=risk_repo)
 
         # ── Core components ─────────────────────────────────────────
         portfolio = PortfolioTracker()
@@ -67,6 +73,10 @@ class Application:
         risk_limits = RiskLimits()
         position_sizer = PositionSizer()
         circuit_breaker = CircuitBreaker()
+
+        # Wire event bus into circuit breaker for CIRCUIT_BREAKER events
+        circuit_breaker.set_event_bus(self._event_bus)
+
         risk_engine = RiskEngine(
             portfolio=portfolio,
             limits=risk_limits,
@@ -85,7 +95,6 @@ class Application:
         signal_repo = SignalRepository()
         order_repo = OrderRepository()
         position_repo = PositionRepository()
-        risk_repo = RiskEventRepository()
 
         # ── Pipeline ─────────────────────────────────────────────────
         pipeline = TradePipeline(
@@ -97,6 +106,7 @@ class Application:
             order_repo=order_repo,
             position_repo=position_repo,
             risk_repo=risk_repo,
+            event_bus=self._event_bus,
         )
 
         # ── Router ───────────────────────────────────────────────────
@@ -115,6 +125,7 @@ class Application:
             mode=self.mode_mode,
             get_equity=lambda: portfolio.equity,
             data_provider=None,
+            event_bus=self._event_bus,
         )
 
         # Load persisted circuit breaker state
@@ -133,6 +144,8 @@ class Application:
         if self._orchestrator is not None:
             self._orchestrator.stop()
         await db.close()
+        if self._event_bus is not None:
+            await self._event_bus.emit("SYSTEM_STOP", reason="application shutdown")
         logger.info("Shutdown complete")
 
     async def run(self) -> None:

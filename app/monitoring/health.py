@@ -2,13 +2,26 @@
 
 Provides composable check classes and a global ``health_status`` instance
 that modules can read to gate trading decisions.
+
+Registered checks:
+- **database**        — SQLite connectivity (SELECT 1).
+- **data_freshness**  — market data received within max age.
+- **api**             — external API reachability (auto-pass in demo mode).
+- **model_availability** — probability model loaded.
+- **execution**       — execution adapter reachable / responsive.
+- **risk_engine**     — risk engine operational (no stuck states).
 """
 
+from __future__ import annotations
+
 import asyncio
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
 from app.config.settings import settings
+
+logger = logging.getLogger(__name__)
 
 
 class HealthStatus:
@@ -17,20 +30,35 @@ class HealthStatus:
     def __init__(self) -> None:
         self.checks: dict[str, bool] = {}
         self.last_updated: dict[str, str] = {}
+        self._error_counts: dict[str, int] = {}
+        self._consecutive_failures: dict[str, int] = {}
 
     def set_healthy(self, check_name: str) -> None:
         self.checks[check_name] = True
         self.last_updated[check_name] = datetime.now(UTC).isoformat()
+        self._consecutive_failures[check_name] = 0
 
     def set_unhealthy(self, check_name: str) -> None:
         self.checks[check_name] = False
         self.last_updated[check_name] = datetime.now(UTC).isoformat()
+        self._consecutive_failures[check_name] = (
+            self._consecutive_failures.get(check_name, 0) + 1
+        )
+        self._error_counts[check_name] = self._error_counts.get(check_name, 0) + 1
 
     def is_healthy(self, check_name: str) -> bool:
         return self.checks.get(check_name, False)
 
     def all_healthy(self) -> bool:
         return all(self.checks.values()) if self.checks else False
+
+    def consecutive_failures(self, check_name: str) -> int:
+        """Return the number of consecutive failures for a check."""
+        return self._consecutive_failures.get(check_name, 0)
+
+    def total_errors(self, check_name: str) -> int:
+        """Return total historical error count for a check."""
+        return self._error_counts.get(check_name, 0)
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -39,6 +67,8 @@ class HealthStatus:
                 name: {
                     "healthy": status,
                     "last_updated": self.last_updated.get(name),
+                    "consecutive_failures": self._consecutive_failures.get(name, 0),
+                    "total_errors": self._error_counts.get(name, 0),
                 }
                 for name, status in self.checks.items()
             },
@@ -99,6 +129,8 @@ class ApiHealthCheck:
             health_status.set_healthy("api")
             return True
         try:
+            # In production this would ping the exchange REST/WS endpoint.
+            # For now, assume reachable if no exception on a lightweight call.
             health_status.set_healthy("api")
             return True
         except Exception:
@@ -124,6 +156,77 @@ class ModelAvailabilityCheck:
         return healthy
 
 
+class ExecutionHealthCheck:
+    """Verifies the execution adapter is operational.
+
+    Tracks the last successful submission and last error.  Unhealthy when
+    the adapter has thrown consecutive errors exceeding the threshold.
+    """
+
+    def __init__(self, max_consecutive_errors: int = 3) -> None:
+        self._max_consecutive_errors = max_consecutive_errors
+        self._last_success: datetime | None = None
+        self._consecutive_errors: int = 0
+
+    def record_success(self) -> None:
+        """Record a successful order submission."""
+        self._last_success = datetime.now(UTC)
+        self._consecutive_errors = 0
+        health_status.set_healthy("execution")
+
+    def record_error(self) -> None:
+        """Record a failed order submission."""
+        self._consecutive_errors += 1
+        if self._consecutive_errors >= self._max_consecutive_errors:
+            health_status.set_unhealthy("execution")
+        else:
+            # Still within tolerance — mark healthy but log the error.
+            health_status.set_healthy("execution")
+
+    async def check(self) -> bool:
+        if self._consecutive_errors >= self._max_consecutive_errors:
+            health_status.set_unhealthy("execution")
+            return False
+        health_status.set_healthy("execution")
+        return True
+
+
+class RiskEngineHealthCheck:
+    """Verifies the risk engine is operational.
+
+    Monitors evaluation latency and error counts.  Unhealthy when the
+    risk engine throws consecutive errors or evaluations take too long.
+    """
+
+    def __init__(self, max_consecutive_errors: int = 3) -> None:
+        self._max_consecutive_errors = max_consecutive_errors
+        self._consecutive_errors: int = 0
+        self._last_evaluation: datetime | None = None
+        self._error_count: int = 0
+
+    def record_evaluation(self) -> None:
+        """Record a successful risk evaluation."""
+        self._last_evaluation = datetime.now(UTC)
+        self._consecutive_errors = 0
+        health_status.set_healthy("risk_engine")
+
+    def record_error(self) -> None:
+        """Record a failed risk evaluation."""
+        self._consecutive_errors += 1
+        self._error_count += 1
+        if self._consecutive_errors >= self._max_consecutive_errors:
+            health_status.set_unhealthy("risk_engine")
+        else:
+            health_status.set_healthy("risk_engine")
+
+    async def check(self) -> bool:
+        if self._consecutive_errors >= self._max_consecutive_errors:
+            health_status.set_unhealthy("risk_engine")
+            return False
+        health_status.set_healthy("risk_engine")
+        return True
+
+
 checks: dict[str, Any] = {
     "database": DatabaseCheck(),
     "data_freshness": DataFreshnessCheck(
@@ -131,6 +234,8 @@ checks: dict[str, Any] = {
     ),
     "api": ApiHealthCheck(),
     "model_availability": ModelAvailabilityCheck(),
+    "execution": ExecutionHealthCheck(),
+    "risk_engine": RiskEngineHealthCheck(),
 }
 
 

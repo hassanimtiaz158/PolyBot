@@ -5,8 +5,10 @@ from app.monitoring.health import (
     ApiHealthCheck,
     DatabaseCheck,
     DataFreshnessCheck,
+    ExecutionHealthCheck,
     HealthStatus,
     ModelAvailabilityCheck,
+    RiskEngineHealthCheck,
     checks,
     health_check_loop,
     health_status,
@@ -15,7 +17,8 @@ from app.monitoring.health import (
 
 __all__ = [
     "HealthStatus", "health_status",
-    "DatabaseCheck", "DataFreshnessCheck", "ApiHealthCheck", "ModelAvailabilityCheck",
+    "DatabaseCheck", "DataFreshnessCheck", "ApiHealthCheck",
+    "ModelAvailabilityCheck", "ExecutionHealthCheck", "RiskEngineHealthCheck",
     "checks", "run_all_checks", "health_check_loop",
     "AlertDispatcher",
 ]

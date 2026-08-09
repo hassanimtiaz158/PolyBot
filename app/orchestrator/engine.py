@@ -12,6 +12,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from app.audit.events import EventBus, default_bus
 from app.config.settings import settings
 from app.modes.state import ModeState, OperatingMode
 from app.monitoring.health import health_status, run_all_checks
@@ -36,6 +37,9 @@ class Orchestrator:
     4. Runs all enabled strategies and routes signals through the pipeline.
     5. Sleeps until the next scan interval.
 
+    Every meaningful state change is emitted as a structured audit event
+    via the :class:`EventBus` for full traceability.
+
     Parameters
     ----------
     router : SignalRouter
@@ -52,6 +56,9 @@ class Orchestrator:
         ``market_id`` → feature dict.  When ``None``, produces empty list.
     scan_interval : int | None
         Seconds between market scans (default from ``settings``).
+    event_bus : EventBus | None
+        Structured event bus for audit logging.  Uses the module-level
+        ``default_bus`` when ``None``.
     """
 
     def __init__(
@@ -62,6 +69,7 @@ class Orchestrator:
         get_equity: Callable[[], float] | None = None,
         data_provider: Callable[[], Any] | None = None,
         scan_interval: int | None = None,
+        event_bus: EventBus | None = None,
     ) -> None:
         self._router = router
         self._breaker = breaker
@@ -74,6 +82,7 @@ class Orchestrator:
         self._running = False
         self._daily_pnl: float = 0.0
         self._consecutive_losses: int = 0
+        self._bus = event_bus or default_bus
 
     # ── Lifecycle ───────────────────────────────────────────────────
 
@@ -85,12 +94,18 @@ class Orchestrator:
             "Initial health: all_healthy=%s",
             health_status.all_healthy(),
         )
+        await self._bus.emit(
+            "SYSTEM_START",
+            reason=f"mode={self._mode.mode.value}",
+            healthy=health_status.all_healthy(),
+        )
         if self._mode.mode == OperatingMode.HALTED:
             logger.warning("System starts in HALTED — operator must transition")
 
     async def shutdown(self) -> None:
         """Gracefully stop the orchestrator."""
         logger.info("Orchestrator shutting down")
+        await self._bus.emit("SYSTEM_STOP", reason="graceful shutdown")
         self._running = False
 
     async def run(self) -> None:
@@ -122,6 +137,8 @@ class Orchestrator:
 
         await run_all_checks()
 
+        previous_state = self._breaker.state
+
         await self._breaker.check_and_trigger(
             daily_pnl=self._daily_pnl,
             consecutive_losses=self._consecutive_losses,
@@ -129,6 +146,17 @@ class Orchestrator:
             api_healthy=health_status.is_healthy("api"),
             equity=self._get_equity(),
         )
+
+        # Emit circuit breaker event on state change
+        if self._breaker.state != previous_state:
+            await self._bus.emit(
+                "CIRCUIT_BREAKER",
+                decision=self._breaker.state.value,
+                reason=", ".join(self._breaker.reasons) or "state change",
+                previous_state=previous_state.value if previous_state else None,
+                daily_pnl=self._daily_pnl,
+                consecutive_losses=self._consecutive_losses,
+            )
 
         if self._breaker.state == BreakerState.HALTED:
             logger.warning("Skipping iteration — circuit breaker HALTED")
@@ -140,9 +168,22 @@ class Orchestrator:
                 data = await self._data_provider()
                 if isinstance(data, dict):
                     market_features = data
+                    for market_id in market_features:
+                        await self._bus.data_received(market_id=market_id)
             except Exception as exc:
                 logger.exception("Data provider failed: %s", exc)
+                await self._bus.emit(
+                    "DATA_STALE",
+                    reason=f"data provider error: {exc}",
+                )
                 return
+
+        # Emit stale data event if data freshness check failed
+        if not health_status.is_healthy("data_freshness"):
+            await self._bus.emit(
+                "DATA_STALE",
+                reason="data freshness check failed",
+            )
 
         all_results: list[PipelineResult] = []
         for market_id, features in market_features.items():

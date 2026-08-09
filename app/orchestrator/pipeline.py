@@ -4,6 +4,9 @@ Every signal from a strategy passes through this pipeline in sequence.
 At each stage the pipeline may reject the opportunity, in which case
 execution is skipped.  Persistence is incremental: signals and risk
 events are stored even when the trade is rejected.
+
+Every stage transition is emitted as a structured audit event via the
+:class:`EventBus` for full traceability.
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.audit.events import EventBus, default_bus
 from app.config.settings import settings
 from app.ev.costs import DEFAULT_FEE_RATE
 from app.ev.expected_value import EVResult, ExpectedValueEngine
@@ -72,6 +76,8 @@ class TradePipeline:
         Persists position records.
     risk_repo : RiskEventRepository
         Persists risk events.
+    event_bus : EventBus | None
+        Structured event bus.  Uses module-level ``default_bus`` when None.
     """
 
     def __init__(
@@ -84,6 +90,7 @@ class TradePipeline:
         order_repo: OrderRepository,
         position_repo: PositionRepository,
         risk_repo: RiskEventRepository,
+        event_bus: EventBus | None = None,
     ) -> None:
         self._ev = ev_engine
         self._risk = risk_engine
@@ -93,6 +100,7 @@ class TradePipeline:
         self._order_repo = order_repo
         self._position_repo = position_repo
         self._risk_repo = risk_repo
+        self._bus = event_bus or default_bus
 
     async def run(
         self,
@@ -125,6 +133,15 @@ class TradePipeline:
         if signal.decision != StrategyDecision.CANDIDATE:
             return PipelineResult(signal=signal)
 
+        # Emit signal created event
+        await self._bus.signal_created(
+            market_id=signal.market_id,
+            strategy=signal.strategy,
+            side=signal.side,
+            edge=signal.gross_edge,
+            confidence=signal.confidence,
+        )
+
         net_edge: float | None = None
         ev_result: EVResult | None = None
 
@@ -150,6 +167,11 @@ class TradePipeline:
             logger.exception("EV engine failed for %s/%s", signal.market_id, signal.side)
             result = PipelineResult(signal=signal, error=f"EV engine error: {exc}")
             await self._persist_signal(signal, net_edge=None)
+            await self._bus.signal_rejected(
+                market_id=signal.market_id,
+                strategy=signal.strategy,
+                reason=f"EV engine error: {exc}",
+            )
             return result
 
         # ── Stage 2: Risk Engine ─────────────────────────────────────
@@ -182,7 +204,11 @@ class TradePipeline:
             )
             await self._persist_signal(signal, net_edge=net_edge)
             await self._persist_risk_event(risk_decision)
+            await self._bus.risk_decision(risk_decision, approved=False)
             return result
+
+        # Emit risk approved
+        await self._bus.risk_decision(risk_decision, approved=True)
 
         # ── Stage 3: Execution ───────────────────────────────────────
         order_result: OrderResult | None = None
@@ -199,6 +225,31 @@ class TradePipeline:
             await self._persist_signal(signal, net_edge=net_edge)
             await self._persist_risk_event(risk_decision)
             return result
+
+        # Emit order events
+        if order_result.status == "REJECTED":
+            await self._bus.order_rejected(
+                order_id=order_result.order_id,
+                market_id=order_result.market_id,
+                reason=order_result.error or "adapter rejected",
+                side=order_result.side,
+            )
+        elif order_result.status in ("FILLED", "PARTIALLY_FILLED"):
+            await self._bus.order_filled(
+                order_id=order_result.order_id,
+                market_id=order_result.market_id,
+                side=order_result.side,
+                filled_size=order_result.filled_size,
+                average_fill=order_result.average_fill,
+                requested_size=order_result.requested_size,
+            )
+        else:
+            await self._bus.order_submitted(
+                order_id=order_result.order_id,
+                market_id=order_result.market_id,
+                side=order_result.side,
+                size=order_result.requested_size,
+            )
 
         # ── Persist everything ───────────────────────────────────────
         await self._persist_signal(signal, net_edge=net_edge)
