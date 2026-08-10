@@ -148,10 +148,11 @@ class Strategy(ABC):
         confidence: float,
         reason: str,
         feature_snapshot: dict[str, Any] | None = None,
+        gross_edge: float | None = None,
     ) -> Signal:
         """Build a ``CANDIDATE`` signal.
 
-        ``gross_edge`` is computed automatically.
+        ``gross_edge`` is computed automatically unless provided explicitly.
         """
         return Signal(
             strategy=self.name,
@@ -160,6 +161,7 @@ class Strategy(ABC):
             decision=StrategyDecision.CANDIDATE,
             model_probability=model_probability,
             implied_probability=implied_probability,
+            gross_edge=gross_edge,
             confidence=confidence,
             reason=reason,
             feature_snapshot=feature_snapshot or {},

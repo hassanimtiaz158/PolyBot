@@ -1,6 +1,5 @@
 """Unit tests for configuration settings."""
 
-import os
 
 from app.config.settings import Settings
 

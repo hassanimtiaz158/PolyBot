@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import copy
 import logging
-from typing import Any, Iterable, Mapping
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 logger = logging.getLogger(__name__)
 

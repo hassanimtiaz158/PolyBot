@@ -24,6 +24,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.audit.events import EventBus, default_bus
 from app.execution.interface import ExecutionAdapter
 from app.execution.state_machine import OrderState, OrderStateMachine
 from app.monitoring.health import checks as health_checks
@@ -115,9 +116,10 @@ class ExecutionEngine:
         The underlying execution adapter (paper or live).
     """
 
-    def __init__(self, adapter: ExecutionAdapter) -> None:
+    def __init__(self, adapter: ExecutionAdapter, event_bus: EventBus | None = None) -> None:
         self._adapter = adapter
         self._exec_health = health_checks.get("execution")
+        self._bus = event_bus or default_bus
 
     async def execute(self, decision: RiskDecision) -> OrderResult:
         """Execute a risk-approved decision through the full order lifecycle.
@@ -251,20 +253,25 @@ class ExecutionEngine:
             extra={"raw_adapter_result": raw_result},
         )
 
-    async def cancel_order(self, order_id: str) -> bool:
+    async def cancel_order(self, order_id: str, market_id: str = "") -> bool:
         """Cancel an order through the adapter.
 
         Parameters
         ----------
         order_id : str
             Order ID to cancel.
+        market_id : str
+            Market ID for audit trail (optional).
 
         Returns
         -------
         bool
             ``True`` if the cancellation was successful.
         """
-        return await self._adapter.cancel(order_id)
+        success = await self._adapter.cancel(order_id)
+        if success:
+            await self._bus.order_cancelled(order_id=order_id, market_id=market_id)
+        return success
 
     async def order_status(self, order_id: str) -> dict[str, Any]:
         """Query the current status of an order.

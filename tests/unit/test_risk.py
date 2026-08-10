@@ -4,17 +4,18 @@ Covers every rejection reason, boundary values, state transitions,
 fail-closed invariants, and property-based tests.
 """
 
-from typing import Any
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
-from hypothesis import given, settings as hyp_settings
-from hypothesis.strategies import floats, integers
+from hypothesis import given
+from hypothesis import settings as hyp_settings
+from hypothesis.strategies import floats
 
 from app.portfolio.tracker import PortfolioTracker
 from app.risk.circuit_breaker import BreakerState, CircuitBreaker
 from app.risk.engine import RiskDecision, RiskEngine
-from app.risk.limits import LimitCheck, RiskLimits
+from app.risk.limits import RiskLimits
 from app.risk.position_sizing import PositionSizer
 from app.strategies.base import Signal, StrategyDecision
 

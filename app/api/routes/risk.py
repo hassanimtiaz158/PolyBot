@@ -9,7 +9,6 @@ from app.api.models import (
     ExposureSummary,
     PaginatedResponse,
     PaginationMeta,
-    RiskEventResponse,
     RiskResponse,
 )
 from app.config.settings import settings

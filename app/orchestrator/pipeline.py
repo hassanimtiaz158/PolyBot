@@ -274,6 +274,15 @@ class TradePipeline:
         await self._persist_order(order_result)
         await self._update_portfolio(order_result)
 
+        # Emit position update after fill
+        if order_result.filled_size > 0:
+            await self._bus.position_updated(
+                market_id=order_result.market_id,
+                side=order_result.side,
+                size=order_result.filled_size,
+                average_entry=order_result.average_fill or 0.0,
+            )
+
         logger.info(
             "Pipeline complete: %s/%s size=%.2f filled=%.2f status=%s",
             signal.market_id,

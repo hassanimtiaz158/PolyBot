@@ -21,6 +21,7 @@ from app.orchestrator.engine import Orchestrator
 from app.orchestrator.pipeline import TradePipeline
 from app.orchestrator.router import SignalRouter
 from app.portfolio.tracker import PortfolioTracker
+from app.reconciliation.reconciler import Reconciler
 from app.risk.circuit_breaker import CircuitBreaker
 from app.risk.engine import RiskEngine
 from app.risk.limits import RiskLimits
@@ -130,6 +131,27 @@ class Application:
 
         # Load persisted circuit breaker state
         await circuit_breaker.load_state()
+
+        # ── Reconciliation ─────────────────────────────────────────
+        reconciler = Reconciler(
+            order_repo=order_repo,
+            position_repo=position_repo,
+        )
+        recon_result = await reconciler.reconcile_all()
+        if not recon_result.is_clean:
+            logger.warning(
+                "Reconciliation found discrepancies: %s — "
+                "review before enabling live trading",
+                recon_result.summary(),
+            )
+            if self._event_bus is not None:
+                await self._event_bus.emit(
+                    "RISK_REJECTED",
+                    reason="RECONCILIATION_DISCREPANCIES",
+                    orders_missing=len(recon_result.orders_missing),
+                    orders_status_mismatch=len(recon_result.orders_status_mismatch),
+                    positions_missing=len(recon_result.positions_missing),
+                )
 
         logger.info(
             "Startup complete — %d strategies registered, mode=%s, healthy=%s",

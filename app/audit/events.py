@@ -369,6 +369,24 @@ class EventBus:
             "ORDER_CANCELLED", market_id=market_id, order_id=order_id
         )
 
+    async def position_updated(
+        self,
+        market_id: str,
+        *,
+        side: str = "",
+        size: float = 0.0,
+        average_entry: float = 0.0,
+        unrealised_pnl: float = 0.0,
+    ) -> AuditEvent:
+        return await self.emit(
+            "POSITION_UPDATED",
+            market_id=market_id,
+            side=side,
+            size=size,
+            average_entry=average_entry,
+            unrealised_pnl=unrealised_pnl,
+        )
+
 
 def event_from_dict(data: dict[str, Any]) -> AuditEvent:
     """Reconstruct an :class:`AuditEvent` from a stored row."""

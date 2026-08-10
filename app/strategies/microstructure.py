@@ -80,13 +80,17 @@ class MicrostructureStrategy(Strategy):
 
         # ── Model probability: adjust toward the dominant side ──────
         # Stronger OBI → larger adjustment
+        # Positive OBI (bid-heavy) → buying pressure → YES likely underpriced
+        # Negative OBI (ask-heavy) → selling pressure → YES likely overpriced
         adjustment = abs(obi) * 0.10
         if side == "YES":
             model_probability = min(0.99, implied_probability + adjustment)
+            gross_edge = model_probability - implied_probability
         else:
+            # For NO: model thinks YES is overpriced (lower true prob)
+            # Edge on NO side = how much YES is overpriced
             model_probability = max(0.01, implied_probability - adjustment)
-
-        gross_edge = model_probability - implied_probability
+            gross_edge = implied_probability - model_probability
 
         # ── Edge threshold gate ─────────────────────────────────────
         edge_bps = gross_edge * 10_000
@@ -120,6 +124,7 @@ class MicrostructureStrategy(Strategy):
                 f"edge={edge_bps:.1f}bps"
             ),
             feature_snapshot=dict(features),
+            gross_edge=gross_edge,
         )
 
     # ── Private helpers ─────────────────────────────────────────────

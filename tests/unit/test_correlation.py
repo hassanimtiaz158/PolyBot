@@ -6,8 +6,8 @@ queries, and RiskEngine integration that prefers NO TRADE over breaking
 a portfolio-level limit.
 """
 
-from typing import Any
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 

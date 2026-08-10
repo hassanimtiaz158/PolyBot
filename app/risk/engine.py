@@ -300,15 +300,34 @@ class RiskEngine:
                 },
             )
 
+        # Compute net exposure after fill.
+        # Closing trades (opposite side to existing position) reduce exposure;
+        # opening/additive trades increase it.
+        existing_pos = self._portfolio._positions.get(signal.market_id)
+        is_closing = (
+            existing_pos is not None
+            and existing_pos.get("side") != signal.side
+            and existing_pos.get("size", 0) > 0
+        )
+        if is_closing:
+            net_market_exposure = max(0.0, market_exposure - proposed_size)
+            net_total_exposure = max(0.0, total_exposure - proposed_size)
+            closes_fully = market_exposure <= proposed_size
+            net_open_positions = max(0, open_positions - (1 if closes_fully else 0))
+        else:
+            net_market_exposure = market_exposure + proposed_size
+            net_total_exposure = total_exposure + proposed_size
+            net_open_positions = open_positions
+
         # All portfolio-level checks
         portfolio_check = self._limits.all_checks(
             proposed_size=proposed_size,
             equity=equity,
-            market_exposure=market_exposure + proposed_size,
-            total_exposure=total_exposure + proposed_size,
+            market_exposure=net_market_exposure,
+            total_exposure=net_total_exposure,
             daily_pnl=daily_pnl,
             consecutive_losses=consecutive_losses,
-            open_positions=open_positions,
+            open_positions=net_open_positions,
         )
         if not portfolio_check.approved:
             return self._reject(
@@ -318,9 +337,9 @@ class RiskEngine:
                 risk_metrics={
                     "equity": equity,
                     "proposed_size": proposed_size,
-                    "market_exposure": market_exposure + proposed_size,
-                    "total_exposure": total_exposure + proposed_size,
-                    "open_positions": float(open_positions),
+                    "market_exposure": net_market_exposure,
+                    "total_exposure": net_total_exposure,
+                    "open_positions": float(net_open_positions),
                     "daily_pnl": daily_pnl,
                     "consecutive_losses": float(consecutive_losses),
                 },

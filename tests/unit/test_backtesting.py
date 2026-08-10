@@ -24,7 +24,7 @@ from app.backtesting.models import (
 )
 from app.backtesting.report import ReportGenerator
 from app.config.settings import settings
-from app.strategies.base import Signal, Strategy, StrategyDecision
+from app.strategies.base import Signal, Strategy
 
 # ── Helpers ──────────────────────────────────────────────────────────
 

@@ -156,8 +156,19 @@ class BacktestEngine:
                 signal_id=signal.signal_id,
             ))
 
-            self._daily_pnl += result["pnl_change"]
-            if result["pnl_change"] < 0:
+            # Daily P&L / consecutive-loss tracking mirrors the LIVE
+            # orchestrator engine: it uses the directional deviation
+            # from 0.50 (entry vs fair), NOT the per-fill fee drag.
+            # Opening a side below 0.50 is a "win" and resets the
+            # streak; otherwise every opening fill would register a
+            # loss (the fee) and falsely trip the circuit breaker.
+            entry = result["fill_price"]
+            if signal.side == "YES":
+                tracking_pnl = decision.size * (0.50 - entry)
+            else:
+                tracking_pnl = decision.size * (entry - 0.50)
+            self._daily_pnl += tracking_pnl
+            if tracking_pnl < 0:
                 self._consecutive_losses += 1
             else:
                 self._consecutive_losses = 0
@@ -188,6 +199,13 @@ class BacktestEngine:
         ts_str = datetime.fromtimestamp(
             snap.timestamp, tz=UTC
         ).isoformat()
+        # Optional microstructure fields — present when the snapshot
+        # carries order-book imbalance data (live extractor, synthetic
+        # backtest data).  Absent on plain snapshots.
+        obi = getattr(snap, "obi", None)
+        velocity = getattr(snap, "velocity_60s", None)
+        bid_depth = getattr(snap, "bid_depth", None)
+        ask_depth = getattr(snap, "ask_depth", None)
         return {
             "market_id": snap.market_id,
             "midpoint": snap.midpoint,
@@ -198,4 +216,8 @@ class BacktestEngine:
             "volume": snap.volume,
             "liquidity_score": snap.depth,
             "timestamp": ts_str,
+            "obi": obi,
+            "velocity_60s": velocity,
+            "bid_depth": bid_depth,
+            "ask_depth": ask_depth,
         }

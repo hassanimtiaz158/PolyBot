@@ -12,7 +12,11 @@ from app.storage.repositories import PositionRepository
 router = APIRouter(tags=["positions"])
 
 
-@router.get("/positions", response_model=PaginatedResponse[PositionResponse], summary="List positions")
+@router.get(
+    "/positions",
+    response_model=PaginatedResponse[PositionResponse],
+    summary="List positions",
+)
 async def list_positions(
     db: Database = Depends(get_db),
     limit: int = Query(50, ge=1, le=100, description="Page size"),

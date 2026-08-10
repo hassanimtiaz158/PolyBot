@@ -188,7 +188,8 @@ class TestOrderBookFeaturesTopNDepth:
 
 class TestOrderBookFeaturesDataFreshness:
     def test_fresh_timestamp(self) -> None:
-        assert OrderBookFeatures.data_freshness(FRESH_TS, max_age_seconds=FRESH_MAX_AGE_SECONDS) is True
+        result = OrderBookFeatures.data_freshness(FRESH_TS, max_age_seconds=FRESH_MAX_AGE_SECONDS)
+        assert result is True
 
     def test_stale_timestamp(self) -> None:
         assert OrderBookFeatures.data_freshness(STALE_TS, max_age_seconds=10) is False

@@ -1,6 +1,5 @@
 """Shared test fixtures and configuration."""
 
-import asyncio
 from collections.abc import AsyncGenerator
 from typing import Any
 
