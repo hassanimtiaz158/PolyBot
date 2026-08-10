@@ -225,6 +225,32 @@ class SnapshotRepository:
         await self._db.conn.commit()
         return cursor.rowcount
 
+    async def _fetch_rows(
+        self, sql: str, params: tuple[object, ...] = ()
+    ) -> list[dict[str, object]]:
+        """Execute a parameterised SELECT and return rows as dicts."""
+        cursor = await self._db.conn.execute(sql, params)
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def latest_spreads(self) -> list[dict[str, object]]:
+        """Return the most recent spread per market that has snapshots."""
+        return await self._fetch_rows(
+            "SELECT s.market_id, s.spread FROM market_snapshots s "
+            "WHERE s.timestamp = ("
+            "  SELECT MAX(m.timestamp) FROM market_snapshots m "
+            "  WHERE m.market_id = s.market_id"
+            ")"
+        )
+
+    async def latest_timestamp(self) -> str | None:
+        """Return the timestamp of the most recent snapshot across markets."""
+        cursor = await self._db.conn.execute(
+            "SELECT MAX(timestamp) FROM market_snapshots"
+        )
+        row = await cursor.fetchone()
+        return str(row[0]) if row and row[0] is not None else None
+
 
 # ── SignalRepository ────────────────────────────────────────────────
 
@@ -300,6 +326,15 @@ class SignalRepository(_QueryMixin):
         cursor = await self._db.conn.execute("SELECT COUNT(*) FROM signals")
         row = await cursor.fetchone()
         return row[0] if row else 0
+
+    async def count_candidates(self) -> int:
+        """Return the number of signals with a ``CANDIDATE`` decision.
+
+        Used by the dashboard to report the count of active signals.
+        """
+        return await self._fetch_count(
+            "SELECT COUNT(*) FROM signals WHERE decision = 'CANDIDATE'"
+        )
 
     async def list_paginated(
         self,
@@ -454,6 +489,19 @@ class OrderRepository(_QueryMixin):
     async def count(self) -> int:
         """Return the total number of orders."""
         return await self._fetch_count("SELECT COUNT(*) FROM orders")
+
+    async def list_filled(self) -> list[Order]:
+        """Return all filled (or partially filled) orders by submission time.
+
+        Used to reconstruct historical P&L series and exposure/streak
+        aggregates for the dashboard.
+        """
+        cursor = await self._db.conn.execute(
+            "SELECT * FROM orders WHERE status IN ('FILLED', 'PARTIALLY_FILLED') "
+            "ORDER BY submitted_at ASC"
+        )
+        rows = await cursor.fetchall()
+        return [Order.from_row(dict(r)) for r in rows]
 
     async def count_filled(self) -> int:
         """Return the number of orders in a filled (or partially filled) state."""

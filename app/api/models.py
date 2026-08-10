@@ -162,3 +162,51 @@ class PerformanceResponse(BaseModel):
     total_orders: int
     filled_orders: int
     timestamp: str
+
+
+# ── Dashboard aggregates ────────────────────────────────────────────
+
+
+class DashboardOverviewResponse(BaseModel):
+    """Headline numbers for the dashboard Overview page."""
+
+    account_balance: float
+    available_balance: float
+    today_pnl: float
+    total_pnl: float
+    realized_pnl: float
+    unrealized_pnl: float
+    max_drawdown: float
+    total_exposure: float
+    open_positions: int
+    active_signals: int
+    bot_mode: str
+    circuit_breaker: CircuitBreakerInfo | None = None
+
+
+class EquityPoint(BaseModel):
+    """A single point on the equity curve."""
+
+    timestamp: str
+    equity: float
+
+
+class EquityResponse(BaseModel):
+    """Historical equity curve derived from persisted order fills."""
+
+    points: list[EquityPoint]
+
+
+class DashboardRiskResponse(BaseModel):
+    """Risk utilisation summary for the dashboard Risk page."""
+
+    daily_loss: float
+    daily_loss_limit: float
+    exposure: float
+    exposure_limit: float
+    consecutive_losses: int
+    consecutive_loss_limit: int
+    spread_status: str
+    liquidity_status: str
+    data_freshness: str
+    circuit_breaker: CircuitBreakerInfo | None = None

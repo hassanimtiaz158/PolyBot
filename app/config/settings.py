@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     # ── Operating mode ──────────────────────────────────────────────
     mode: str = "RESEARCH"
 
+    # ── Portfolio / account ─────────────────────────────────────────
+    # Starting equity used to derive account balance from persisted P&L.
+    initial_equity: float = Field(default=10_000.0, ge=0.0)
+
     # ── Live trading gate (default OFF) ─────────────────────────────
     live_trading_enabled: bool = False
 

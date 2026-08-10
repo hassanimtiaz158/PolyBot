@@ -29,6 +29,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.routes import (
     audit,
+    dashboard,
     health,
     markets,
     orders,
@@ -181,6 +182,7 @@ def create_app(database: Database | None = None) -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(status.router)
+    app.include_router(dashboard.router)
     app.include_router(markets.router)
     app.include_router(signals.router)
     app.include_router(positions.router)
