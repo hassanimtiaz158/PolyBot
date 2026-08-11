@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="POLYBOT — a dark quantitative trading terminal. Synthetic data only; no live trading connections.">
+  <title>POLYBOT — Quant Trading Terminal</title>
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <!-- ======================= Top navigation ======================= -->
+  <header class="topbar">
+    <div class="brand" aria-label="POLYBOT home">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">POLYBOT</span>
+      <span class="brand-sub">QUANT&nbsp;TERMINAL</span>
+    </div>
+
+    <nav class="main-nav" aria-label="Primary">
+      <a class="nav-link is-active" href="#view-overview" aria-current="page">Overview</a>
+      <a class="nav-link" href="#view-markets">Markets</a>
+      <a class="nav-link" href="#view-signals">Signals</a>
+      <a class="nav-link" href="#view-positions">Positions</a>
+      <a class="nav-link" href="#view-orders">Orders</a>
+      <a class="nav-link" href="#view-performance">Performance</a>
+      <a class="nav-link" href="#view-risk">Risk</a>
+      <a class="nav-link" href="#view-system">System</a>
+    </nav>
+
+    <div class="topbar-actions">
+      <span id="data-status" class="data-status live" role="status" aria-live="polite">DATA LIVE</span>
+      <span id="mode-badge" class="mode-badge" role="status" aria-live="polite">
+        <span class="mode-dot" aria-hidden="true"></span>
+        <span id="mode-label">PAPER MODE</span>
+      </span>
+      <button id="kill-switch" class="kill-switch" type="button" aria-pressed="false">
+        Kill Switch
+      </button>
+    </div>
+  </header>
+
+  <main id="main" class="content">
+    <!-- ======================= Overview ======================= -->
+    <section class="view" id="view-overview" aria-labelledby="h-overview">
+      <h1 id="h-overview" class="view-title">Overview</h1>
+
+      <div class="cards" id="overview-cards" aria-label="Overview metrics"></div>
+
+      <div class="charts" aria-label="Charts">
+        <article class="panel chart-panel chart-primary">
+          <h2>Equity Curve</h2>
+          <div class="chart-wrap">
+            <canvas id="equity-chart" role="img" aria-label="Equity curve chart"></canvas>
+          </div>
+          <p class="chart-note" id="equity-note" aria-hidden="true"></p>
+        </article>
+        <article class="panel chart-panel">
+          <h2>Daily P&amp;L</h2>
+          <div class="chart-wrap">
+            <canvas id="daily-pnl-chart" role="img" aria-label="Daily profit and loss bar chart"></canvas>
+          </div>
+        </article>
+        <article class="panel chart-panel">
+          <h2>Win / Loss</h2>
+          <div class="chart-wrap">
+            <canvas id="winloss-chart" role="img" aria-label="Win loss distribution doughnut chart"></canvas>
+          </div>
+        </article>
+      </div>
+
+      <div class="table-grid">
+        <article class="panel">
+          <h2>Active Signals</h2>
+          <div class="table-scroll"><table id="signals-table"></table></div>
+        </article>
+        <article class="panel">
+          <h2>Open Positions</h2>
+          <div class="table-scroll"><table id="positions-table"></table></div>
+        </article>
+      </div>
+
+      <article class="panel">
+        <h2>Recent Orders</h2>
+        <div class="table-scroll"><table id="orders-table"></table></div>
+      </article>
+
+      <div class="panels-grid">
+        <section class="panel" aria-labelledby="h-risk-overview">
+          <h2 id="h-risk-overview">Risk</h2>
+          <div class="tiles" id="risk-tiles" aria-label="Risk utilisation"></div>
+        </section>
+        <section class="panel" aria-labelledby="h-system-overview">
+          <h2 id="h-system-overview">System</h2>
+          <div class="tiles" id="system-tiles" aria-label="System component health"></div>
+        </section>
+      </div>
+    </section>
+
+    <!-- ======================= Markets ======================= -->
+    <section class="view" id="view-markets" aria-labelledby="h-markets">
+      <h1 id="h-markets" class="view-title">Markets</h1>
+      <article class="panel">
+        <div class="table-scroll"><table id="markets-table"></table></div>
+      </article>
+    </section>
+
+    <!-- ======================= Signals ======================= -->
+    <section class="view" id="view-signals" aria-labelledby="h-signals">
+      <h1 id="h-signals" class="view-title">Signals</h1>
+      <article class="panel">
+        <div class="table-scroll"><table id="signals-full-table"></table></div>
+      </article>
+    </section>
+
+    <!-- ======================= Positions ======================= -->
+    <section class="view" id="view-positions" aria-labelledby="h-positions">
+      <h1 id="h-positions" class="view-title">Positions</h1>
+      <article class="panel">
+        <div class="table-scroll"><table id="positions-full-table"></table></div>
+      </article>
+    </section>
+
+    <!-- ======================= Orders ======================= -->
+    <section class="view" id="view-orders" aria-labelledby="h-orders">
+      <h1 id="h-orders" class="view-title">Orders</h1>
+      <article class="panel">
+        <div class="table-scroll"><table id="orders-full-table"></table></div>
+      </article>
+    </section>
+
+    <!-- ======================= Performance ======================= -->
+    <section class="view" id="view-performance" aria-labelledby="h-performance">
+      <h1 id="h-performance" class="view-title">Performance</h1>
+      <div class="cards" id="performance-cards" aria-label="Performance metrics"></div>
+      <article class="panel chart-panel">
+        <h2>Monthly Returns</h2>
+        <div class="chart-wrap">
+          <canvas id="monthly-chart" role="img" aria-label="Monthly returns bar chart"></canvas>
+        </div>
+      </article>
+    </section>
+
+    <!-- ======================= Risk ======================= -->
+    <section class="view" id="view-risk" aria-labelledby="h-risk">
+      <h1 id="h-risk" class="view-title">Risk</h1>
+      <div class="tiles tiles-wide" id="risk-tiles-view" aria-label="Risk utilisation detail"></div>
+    </section>
+
+    <!-- ======================= System ======================= -->
+    <section class="view" id="view-system" aria-labelledby="h-system">
+      <h1 id="h-system" class="view-title">System</h1>
+      <div class="tiles tiles-wide" id="system-tiles-view" aria-label="System component health detail"></div>
+      <article class="panel">
+        <h2>Audit Trail</h2>
+        <div class="table-scroll"><table id="audit-table"></table></div>
+      </article>
+    </section>
+  </main>
+
+  <footer class="footbar">
+    <span id="last-updated" aria-live="off"></span>
+    <span class="foot-note">Synthetic data only — no live trading connections.</span>
+  </footer>
+
+  <noscript><p class="noscript">This dashboard requires JavaScript. No trading happens without it.</p></noscript>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+  <script src="dashboard.js" defer></script>
+</body>
+</html>
