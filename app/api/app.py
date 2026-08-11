@@ -30,6 +30,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.api.routes import (
     audit,
     dashboard,
+    dashboard_ws,
     health,
     markets,
     orders,
@@ -39,6 +40,7 @@ from app.api.routes import (
     signals,
     status,
 )
+from app.api.websocket_broadcast import DashboardBroadcaster
 from app.config.settings import settings
 from app.storage.db import Database, DatabaseError
 
@@ -94,6 +96,11 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         self._api_key = api_key
 
     async def dispatch(self, request: Request, call_next: Any) -> Any:
+        # WebSocket handshakes cannot carry the X-API-Key header from a
+        # browser, so the /ws/dashboard endpoint enforces auth itself.
+        if request.scope["type"] == "websocket":
+            return await call_next(request)
+
         if self._api_key is None:
             return await call_next(request)
 
@@ -140,14 +147,24 @@ def create_app(database: Database | None = None) -> FastAPI:
             await db.connect()
             await db.init_schema()
         app.state.started_at = datetime.now(UTC)
+
+        # Start the read-only change detector that pushes dashboard
+        # events over /ws/dashboard.
+        broadcaster: DashboardBroadcaster = app.state.broadcaster
+        broadcaster.database = db
+        broadcaster.start()
+
         logger.info(
             "api_startup db_path=%s schema_ready=%s",
             db.db_path,
             db.is_connected,
         )
-        yield
-        await db.close()
-        logger.info("api_shutdown")
+        try:
+            yield
+        finally:
+            await broadcaster.stop()
+            await db.close()
+            logger.info("api_shutdown")
 
     app = FastAPI(
         title="Polymarket Quant Bot API",
@@ -162,6 +179,7 @@ def create_app(database: Database | None = None) -> FastAPI:
 
     app.state.db = database or Database()
     app.state.started_at = None
+    app.state.broadcaster = DashboardBroadcaster()
 
     # CORS — restrict to known origins in production.
     app.add_middleware(
@@ -183,6 +201,7 @@ def create_app(database: Database | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(status.router)
     app.include_router(dashboard.router)
+    app.include_router(dashboard_ws.router)
     app.include_router(markets.router)
     app.include_router(signals.router)
     app.include_router(positions.router)

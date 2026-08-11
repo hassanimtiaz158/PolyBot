@@ -8,6 +8,11 @@
    exposes. If the backend is unavailable, the UI shows
    "Unable to load live data" and never falls back to synthetic data.
 
+   Real-time updates arrive over the /ws/dashboard WebSocket; the
+   server pushes a typed event only when a section's data changes.
+   The REST endpoints remain the initial source of truth and act as a
+   fallback while the socket is unavailable.
+
    Configuration (optional):
      window.DASHBOARD_CONFIG = { apiBase, apiKey, intervals }
      URL query:  ?apiBase=...&apiKey=...
@@ -301,15 +306,20 @@ const state = {
     audit: newGroup(),
   },
   killArmed: false,
+  // True while the real-time WebSocket is connected; REST polling for
+  // event-covered groups is paused then (the socket is the freshness
+  // source). REST resumes as fallback when the socket drops.
+  wsActive: false,
 };
 
 /* ================================================================
    Loaders — map API payloads into render-friendly shapes.
+   The map* functions are shared with the WebSocket event handlers so
+   REST and WS updates always produce the same render shape.
    ================================================================ */
 
-async function loadOverview() {
-  const d = await fetchJSON('/api/dashboard/overview');
-  state.groups.overview.data = {
+function mapOverview(d) {
+  return {
     accountBalance: d.account_balance,
     availableBalance: d.available_balance,
     todayPnl: d.today_pnl,
@@ -325,17 +335,8 @@ async function loadOverview() {
   };
 }
 
-async function loadEquity() {
-  const d = await fetchJSON('/api/dashboard/equity');
-  state.groups.equity.data = (d.points || []).map((p) => ({
-    label: fmtDay(p.timestamp),
-    value: typeof p.equity === 'number' ? p.equity : 0,
-  }));
-}
-
-async function loadSignals() {
-  const d = await fetchJSON('/api/dashboard/signals?limit=50');
-  state.groups.signals.data = (d.items || []).map((s) => ({
+function mapSignals(d) {
+  return (d.items || []).map((s) => ({
     id: s.signal_id,
     market: s.market_id,
     strategy: s.strategy,
@@ -347,9 +348,8 @@ async function loadSignals() {
   }));
 }
 
-async function loadMarkets() {
-  const d = await fetchJSON('/api/dashboard/markets?limit=100');
-  state.groups.markets.data = (d.items || []).map((m) => ({
+function mapMarkets(d) {
+  return (d.items || []).map((m) => ({
     id: m.market_id,
     question: m.question,
     status: m.status,
@@ -358,9 +358,8 @@ async function loadMarkets() {
   }));
 }
 
-async function loadPositions() {
-  const d = await fetchJSON('/api/dashboard/positions?limit=50');
-  state.groups.positions.data = (d.items || []).map((p) => ({
+function mapPositions(d) {
+  return (d.items || []).map((p) => ({
     id: p.position_id,
     market: p.market_id,
     side: p.side,
@@ -372,9 +371,8 @@ async function loadPositions() {
   }));
 }
 
-async function loadOrders() {
-  const d = await fetchJSON('/api/dashboard/orders?limit=50');
-  state.groups.orders.data = (d.items || []).map((o) => ({
+function mapOrders(d) {
+  return (d.items || []).map((o) => ({
     id: o.order_id,
     market: o.market_id,
     side: o.side,
@@ -385,6 +383,54 @@ async function loadOrders() {
     status: o.status,
     time: fmtDateTime(o.submitted_at),
   }));
+}
+
+function mapRisk(d) {
+  return {
+    dailyLoss: d.daily_loss,
+    dailyLossLimit: d.daily_loss_limit,
+    exposure: d.exposure,
+    exposureLimit: d.exposure_limit,
+    consecutiveLosses: d.consecutive_losses,
+    consecutiveLossLimit: d.consecutive_loss_limit,
+    spreadStatus: d.spread_status,
+    liquidityStatus: d.liquidity_status,
+    dataFreshness: d.data_freshness,
+    circuitBreaker: d.circuit_breaker,
+  };
+}
+
+async function loadOverview() {
+  const d = await fetchJSON('/api/dashboard/overview');
+  state.groups.overview.data = mapOverview(d);
+}
+
+async function loadEquity() {
+  const d = await fetchJSON('/api/dashboard/equity');
+  state.groups.equity.data = (d.points || []).map((p) => ({
+    label: fmtDay(p.timestamp),
+    value: typeof p.equity === 'number' ? p.equity : 0,
+  }));
+}
+
+async function loadSignals() {
+  const d = await fetchJSON('/api/dashboard/signals?limit=50');
+  state.groups.signals.data = mapSignals(d);
+}
+
+async function loadMarkets() {
+  const d = await fetchJSON('/api/dashboard/markets?limit=100');
+  state.groups.markets.data = mapMarkets(d);
+}
+
+async function loadPositions() {
+  const d = await fetchJSON('/api/dashboard/positions?limit=50');
+  state.groups.positions.data = mapPositions(d);
+}
+
+async function loadOrders() {
+  const d = await fetchJSON('/api/dashboard/orders?limit=50');
+  state.groups.orders.data = mapOrders(d);
 }
 
 async function loadPerformance() {
@@ -404,18 +450,7 @@ async function loadPerformance() {
 
 async function loadRisk() {
   const d = await fetchJSON('/api/dashboard/risk');
-  state.groups.risk.data = {
-    dailyLoss: d.daily_loss,
-    dailyLossLimit: d.daily_loss_limit,
-    exposure: d.exposure,
-    exposureLimit: d.exposure_limit,
-    consecutiveLosses: d.consecutive_losses,
-    consecutiveLossLimit: d.consecutive_loss_limit,
-    spreadStatus: d.spread_status,
-    liquidityStatus: d.liquidity_status,
-    dataFreshness: d.data_freshness,
-    circuitBreaker: d.circuit_breaker,
-  };
+  state.groups.risk.data = mapRisk(d);
 }
 
 async function loadHealth() {
@@ -471,21 +506,21 @@ async function loadGroup(name) {
   }
 }
 
+function loadAllGroups() {
+  Object.keys(LOADERS).forEach((name) => loadGroup(name));
+}
+
 function startScheduler() {
-  loadGroup('overview');
-  loadGroup('equity');
-  loadGroup('signals');
-  loadGroup('markets');
-  loadGroup('positions');
-  loadGroup('orders');
-  loadGroup('performance');
-  loadGroup('risk');
-  loadGroup('health');
-  loadGroup('audit');
+  loadAllGroups();
 
   setInterval(() => {
     const now = Date.now();
+    // While the WebSocket is live, the server pushes changes for these
+    // groups, so per-endpoint REST polling for them is paused. Groups
+    // without a WS event type keep polling.
+    const paused = state.wsActive ? WS_EVENT_GROUPS : new Set();
     Object.keys(CONFIG.intervals).forEach((name) => {
+      if (paused.has(name)) return;
       const g = state.groups[name];
       const interval = CONFIG.intervals[name];
       if (!g.inFlight && (g.lastAttempt == null || now - g.lastAttempt >= interval)) {
@@ -495,6 +530,253 @@ function startScheduler() {
     updateDataStatus();
   }, 1000);
 }
+
+/* ================================================================
+   Real-time WebSocket updates
+   The backend pushes typed events only when a section's data
+   changes. Each event re-renders just the affected components —
+   never the whole dashboard. Reconnects back off 1s/2s/5s/10s/30s
+   and, on repeated failure, the UI shows "LIVE CONNECTION LOST"
+   and "DATA STALE" while REST polling takes over.
+   ================================================================ */
+
+const WS_BACKOFF_MS = [1000, 2000, 5000, 10000, 30000];
+
+// Groups fully refreshed by a WS event type.
+const WS_EVENT_GROUPS = new Set([
+  'overview',
+  'signals',
+  'markets',
+  'positions',
+  'orders',
+  'risk',
+  'health',
+]);
+
+// Groups with no dedicated WS event type; REST always polls these.
+const REST_ALWAYS_GROUPS = ['equity', 'performance', 'audit'];
+
+// Maps event type -> group name whose payload fully refreshes it.
+const WS_EVENT_TO_GROUP = {
+  MARKET_UPDATE: 'markets',
+  SIGNAL_UPDATE: 'signals',
+  POSITION_UPDATE: 'positions',
+  ORDER_UPDATE: 'orders',
+  'P&L_UPDATE': 'overview',
+  RISK_UPDATE: 'risk',
+  HEALTH_UPDATE: 'health',
+};
+
+// wsState: 'connecting' | 'connected' | 'offline'
+let wsState = 'connecting';
+let wsFailed = false;
+let wsAttempt = 0;
+let wsSocket = null;
+let wsRetryTimer = null;
+
+function wsUrl() {
+  const url = new URL(CONFIG.apiBase);
+  const scheme = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  const host = url.host;
+  const path = url.pathname.replace(/\/+$/, '');
+  const query = new URLSearchParams();
+  if (CONFIG.apiKey) query.set('apiKey', CONFIG.apiKey);
+  const qs = query.toString();
+  return `${scheme}//${host}${path}/ws/dashboard${qs ? `?${qs}` : ''}`;
+}
+
+function showConnBanner(show) {
+  const banner = $('#conn-banner');
+  if (banner) banner.hidden = !show;
+}
+
+function updateConnectionUI() {
+  state.wsActive = wsState === 'connected';
+  showConnBanner(wsFailed && wsState !== 'connected');
+  updateDataStatus();
+}
+
+function scheduleWSReconnect() {
+  clearTimeout(wsRetryTimer);
+  const delay = WS_BACKOFF_MS[Math.min(wsAttempt, WS_BACKOFF_MS.length - 1)];
+  wsAttempt += 1;
+  wsRetryTimer = setTimeout(connectWS, delay);
+}
+
+function onWSFailure() {
+  wsFailed = true;
+  wsState = 'offline';
+  wsSocket = null;
+  updateConnectionUI();
+  scheduleWSReconnect();
+}
+
+function connectWS() {
+  if (typeof WebSocket === 'undefined') {
+    // No socket support in this runtime — REST fallback only.
+    wsFailed = true;
+    wsState = 'offline';
+    updateConnectionUI();
+    return;
+  }
+  clearTimeout(wsRetryTimer);
+  wsState = 'connecting';
+  updateConnectionUI();
+
+  let sock;
+  try {
+    sock = new WebSocket(wsUrl());
+  } catch {
+    onWSFailure();
+    return;
+  }
+  wsSocket = sock;
+
+  sock.onopen = () => {
+    if (wsSocket !== sock) return;
+    wsState = 'connected';
+    wsFailed = false;
+    wsAttempt = 0;
+    updateConnectionUI();
+    // Re-sync so incremental events start from a consistent state.
+    loadAllGroups();
+  };
+
+  sock.onmessage = (event) => {
+    if (wsSocket !== sock) return;
+    let msg;
+    try {
+      msg = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    handleWSEvent(msg);
+  };
+
+  sock.onclose = () => {
+    if (wsSocket !== sock) return;
+    onWSFailure();
+  };
+
+  sock.onerror = () => {
+    // onclose always follows; handled there.
+  };
+}
+
+function applyWSGroup(groupName, mappedData) {
+  const g = state.groups[groupName];
+  if (!g) return;
+  g.data = mappedData;
+  g.status = 'ok';
+  g.error = null;
+  g.lastUpdate = Date.now();
+}
+
+/** Fetch one group over REST and run only its renderers (no full re-render). */
+async function refreshGroup(name, renderers) {
+  const g = state.groups[name];
+  if (!g || g.inFlight) return;
+  g.inFlight = true;
+  try {
+    await LOADERS[name]();
+    g.status = 'ok';
+    g.error = null;
+    g.lastUpdate = Date.now();
+  } catch (err) {
+    g.error = classifyError(err);
+    g.status = 'error';
+  } finally {
+    g.inFlight = false;
+    renderers.forEach((fn) => fn());
+    updateDataStatus();
+  }
+}
+
+function handleWSEvent(msg) {
+  if (!msg || typeof msg.type !== 'string') return;
+  if (msg.type === 'CONNECTED' || msg.type === 'PING') return;
+  const handler = WS_HANDLERS[msg.type];
+  if (handler) handler(msg.data || {});
+}
+
+const WS_HANDLERS = {
+  MARKET_UPDATE(data) {
+    applyWSGroup('markets', mapMarkets(data));
+    renderMarketsTable();
+    renderOverviewCards();
+    updateDataStatus();
+  },
+
+  SIGNAL_UPDATE(data) {
+    applyWSGroup('signals', mapSignals(data));
+    renderSignalsTable();
+    renderSignalsFullTable();
+    updateDataStatus();
+  },
+
+  POSITION_UPDATE(data) {
+    applyWSGroup('positions', mapPositions(data));
+    renderPositionsTable();
+    renderPositionsFullTable();
+    renderOverviewCards();
+    updateCharts();
+    updateDataStatus();
+  },
+
+  ORDER_UPDATE(data) {
+    applyWSGroup('orders', mapOrders(data));
+    renderOrdersTable();
+    renderOrdersFullTable();
+    renderPerformanceCards();
+    updateCharts();
+    // Win/loss, performance totals and the equity curve derive from
+    // order history, so pull those groups on demand (they have no
+    // dedicated event type).
+    refreshGroup('performance', [renderPerformanceCards]);
+    refreshGroup('equity', [updateCharts]);
+    updateDataStatus();
+  },
+
+  'P&L_UPDATE'(data) {
+    applyWSGroup('overview', mapOverview(data));
+    renderOverviewCards();
+    renderPerformanceCards();
+    updateCharts();
+    refreshGroup('equity', [updateCharts]);
+    refreshGroup('performance', [renderPerformanceCards]);
+    updateDataStatus();
+  },
+
+  RISK_UPDATE(data) {
+    applyWSGroup('risk', mapRisk(data));
+    renderRisk();
+    renderSystem();
+    updateDataStatus();
+  },
+
+  HEALTH_UPDATE(data) {
+    applyWSGroup('health', data);
+    renderSystem();
+    renderRisk();
+    updateDataStatus();
+  },
+
+  CIRCUIT_BREAKER(data) {
+    const breaker = {
+      state: data.state ?? null,
+      reasons: data.reasons || [],
+      triggered_at: data.triggered_at,
+    };
+    const risk = state.groups.risk.data;
+    if (risk) risk.circuitBreaker = breaker;
+    const overview = state.groups.overview.data;
+    if (overview) overview.circuitBreaker = breaker;
+    renderRisk();
+    renderSystem();
+    updateModeBadge();
+    updateDataStatus();
+  },
+};
 
 /* ================================================================
    Staleness — DATA STALE indicator
@@ -512,11 +794,18 @@ function updateDataStatus() {
   const el = $('#data-status');
   if (!el) return;
   const anyData = Object.values(state.groups).some((g) => g.status === 'ok' && g.data);
-  const stale = Object.keys(CONFIG.intervals).some(isGroupStale);
   if (!anyData) {
     el.textContent = 'DATA STALE';
     el.className = 'data-status offline';
-  } else if (stale) {
+  } else if (state.wsActive) {
+    // The socket is the freshness source while connected.
+    el.textContent = 'DATA LIVE';
+    el.className = 'data-status live';
+  } else if (wsState === 'offline') {
+    // Repeated connection failure: the real-time feed is down.
+    el.textContent = 'DATA STALE';
+    el.className = 'data-status offline';
+  } else if (Object.keys(CONFIG.intervals).some(isGroupStale)) {
     el.textContent = 'DATA STALE';
     el.className = 'data-status stale';
   } else {
@@ -871,7 +1160,10 @@ function updateModeBadge() {
   const ov = state.groups.overview;
   const badge = $('#mode-badge');
   const label = $('#mode-label');
-  if (state.killArmed) {
+  const breaker = ov && ov.data ? ov.data.circuitBreaker : null;
+  const breakerHalted =
+    breaker && (breaker.state === 'HALTED' || breaker.state === 'TRIPPED');
+  if (state.killArmed || breakerHalted) {
     badge.classList.add('mode-halted');
     label.textContent = 'SYSTEM HALTED';
     return;
@@ -1130,6 +1422,7 @@ function init() {
   initNav();
   initKillSwitch();
   startScheduler();
+  connectWS();
 }
 
 document.addEventListener('DOMContentLoaded', init);

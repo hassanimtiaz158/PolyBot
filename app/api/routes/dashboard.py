@@ -19,7 +19,6 @@ from app.api.models import (
     DashboardOverviewResponse,
     DashboardRiskResponse,
     EquityResponse,
-    HealthCheckDetail,
     HealthResponse,
     MarketResponse,
     OrderResponse,
@@ -30,7 +29,6 @@ from app.api.models import (
     RiskEventResponse,
     SignalResponse,
 )
-from app.monitoring.health import checks, health_status
 from app.storage.db import Database
 from app.storage.repositories import (
     MarketRepository,
@@ -227,23 +225,7 @@ async def get_dashboard_health(
     db: Database = Depends(get_db),
 ) -> HealthResponse:
     """Report the health of every registered check for the dashboard."""
-    results: dict[str, bool] = {"database": await db.health()}
-    for name in ("data_freshness", "api", "model_availability"):
-        try:
-            results[name] = await checks[name].check()
-        except Exception:
-            results[name] = False
-    return HealthResponse(
-        healthy=all(results.values()),
-        checks={
-            name: HealthCheckDetail(
-                healthy=ok,
-                last_updated=health_status.last_updated.get(name),
-            )
-            for name, ok in results.items()
-        },
-        timestamp=datetime.now(UTC).isoformat(),
-    )
+    return await dashboard_service.build_health(db)
 
 
 @router.get(

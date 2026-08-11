@@ -302,6 +302,19 @@ a {
   text-align: center;
 }
 
+.conn-banner {
+  position: sticky;
+  top: var(--topbar-h);
+  z-index: 39;
+  padding: 10px 16px;
+  background: var(--amber);
+  color: #1a1204;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.15em;
+  text-align: center;
+}
+
 /* ============================================================
    Layout
    ============================================================ */

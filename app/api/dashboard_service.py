@@ -27,9 +27,13 @@ from app.api.models import (
     DashboardOverviewResponse,
     DashboardRiskResponse,
     EquityPoint,
+    HealthCheckDetail,
+    HealthResponse,
 )
 from app.config.settings import settings
 from app.modes.state import OperatingMode
+from app.monitoring.health import checks as health_checks
+from app.monitoring.health import health_status
 from app.storage.db import Database
 from app.storage.models import Order
 from app.storage.repositories import (
@@ -78,6 +82,32 @@ async def _breaker_info(db: Database) -> CircuitBreakerInfo | None:
         )
     except Exception:
         return None
+
+
+async def circuit_breaker(db: Database) -> CircuitBreakerInfo | None:
+    """Public wrapper around the persisted circuit breaker state."""
+    return await _breaker_info(db)
+
+
+async def build_health(db: Database) -> HealthResponse:
+    """Run the dashboard health checks and assemble a ``HealthResponse``."""
+    results: dict[str, bool] = {"database": await db.health()}
+    for name in ("data_freshness", "api", "model_availability"):
+        try:
+            results[name] = await health_checks[name].check()
+        except Exception:
+            results[name] = False
+    return HealthResponse(
+        healthy=all(results.values()),
+        checks={
+            name: HealthCheckDetail(
+                healthy=ok,
+                last_updated=health_status.last_updated.get(name),
+            )
+            for name, ok in results.items()
+        },
+        timestamp=datetime.now(UTC).isoformat(),
+    )
 
 
 def _order_pnl(order: Order) -> float:

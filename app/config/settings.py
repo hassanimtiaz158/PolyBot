@@ -61,6 +61,12 @@ class Settings(BaseSettings):
     # ── Monitoring ──────────────────────────────────────────────────
     health_check_interval_seconds: int = Field(default=30, ge=1)
 
+    # ── Real-time dashboard ─────────────────────────────────────────
+    # How often the server-side change detector probes the database for
+    # dashboard updates (WebSocket push).  Lower values mean fresher
+    # events; the frontend itself never polls aggressively.
+    dashboard_poll_interval_seconds: float = Field(default=1.0, ge=0.1)
+
     # ── Alerting (optional adapter) ─────────────────────────────────
     alert_enabled: bool = False
     alert_webhook_url: str | None = None
