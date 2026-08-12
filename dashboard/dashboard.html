@@ -114,6 +114,43 @@
     <!-- ======================= Signals ======================= -->
     <section class="view" id="view-signals" aria-labelledby="h-signals">
       <h1 id="h-signals" class="view-title">Signals</h1>
+
+      <div class="signals-filters" id="signals-filters" role="search" aria-label="Signal filters">
+        <div class="filter-group">
+          <label for="filter-strategy" class="filter-label">Strategy</label>
+          <select id="filter-strategy" class="filter-select">
+            <option value="">All Strategies</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="filter-market" class="filter-label">Market</label>
+          <select id="filter-market" class="filter-select">
+            <option value="">All Markets</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="filter-decision" class="filter-label">Decision</label>
+          <select id="filter-decision" class="filter-select">
+            <option value="">All Decisions</option>
+            <option value="TRADE">TRADE</option>
+            <option value="SKIP">SKIP</option>
+            <option value="REJECTED">REJECTED</option>
+            <option value="WAIT">WAIT</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="filter-min-edge" class="filter-label">Min Edge</label>
+          <input id="filter-min-edge" class="filter-input" type="number" step="0.001" placeholder="0.00" min="0">
+        </div>
+        <div class="filter-group">
+          <label for="filter-min-confidence" class="filter-label">Min Confidence</label>
+          <input id="filter-min-confidence" class="filter-input" type="number" step="0.01" placeholder="0.00" min="0" max="1">
+        </div>
+        <button id="filter-reset" class="filter-reset" type="button">Reset Filters</button>
+      </div>
+
+      <div class="signals-summary" id="signals-summary" aria-live="polite"></div>
+
       <article class="panel">
         <div class="table-scroll"><table id="signals-full-table"></table></div>
       </article>
@@ -150,7 +187,45 @@
     <!-- ======================= Risk ======================= -->
     <section class="view" id="view-risk" aria-labelledby="h-risk">
       <h1 id="h-risk" class="view-title">Risk</h1>
-      <div class="tiles tiles-wide" id="risk-tiles-view" aria-label="Risk utilisation detail"></div>
+
+      <div id="risk-halt-banner" class="risk-halt-banner" role="alert" aria-live="assertive" hidden>
+        <div class="risk-halt-title">TRADING DISABLED</div>
+        <ul id="risk-halt-reasons" class="risk-halt-reasons"></ul>
+      </div>
+
+      <!-- ============ Circuit breaker ============ -->
+      <article class="panel breaker-panel breaker-normal" id="breaker-panel" aria-labelledby="h-breaker">
+        <h2 id="h-breaker">Circuit Breaker</h2>
+        <div class="breaker-body">
+          <div class="breaker-state" id="breaker-state">
+            <span id="breaker-indicator" class="breaker-indicator healthy">NORMAL</span>
+            <span id="breaker-status" class="breaker-status healthy">TRADING ENABLED</span>
+          </div>
+          <div id="breaker-reasons" class="breaker-reasons"></div>
+        </div>
+      </article>
+
+      <div class="risk-grid">
+        <section class="panel risk-section" aria-labelledby="h-risk-account">
+          <h2 id="h-risk-account">Account Risk</h2>
+          <div class="risk-cards" id="risk-account-cards" aria-label="Account risk metrics"></div>
+        </section>
+
+        <section class="panel risk-section" aria-labelledby="h-risk-loss">
+          <h2 id="h-risk-loss">Loss Control</h2>
+          <div class="risk-cards" id="risk-loss-cards" aria-label="Loss control metrics"></div>
+        </section>
+
+        <section class="panel risk-section" aria-labelledby="h-risk-market">
+          <h2 id="h-risk-market">Market Risk</h2>
+          <div class="risk-cards" id="risk-market-cards" aria-label="Market risk metrics"></div>
+        </section>
+
+        <section class="panel risk-section" aria-labelledby="h-risk-system">
+          <h2 id="h-risk-system">System Risk</h2>
+          <div class="risk-cards" id="risk-system-cards" aria-label="System risk metrics"></div>
+        </section>
+      </div>
     </section>
 
     <!-- ======================= System ======================= -->

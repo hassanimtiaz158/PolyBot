@@ -202,9 +202,18 @@ async function main() {
   assert.ok(text('#markets-table').includes('Will Q1 happen?'), 'MARKET_UPDATE renders markets table');
   assert.ok(!text('#signals-table').includes('Will Q1 happen?'), 'MARKET_UPDATE does not touch signals');
 
-  send(sock, 'SIGNAL_UPDATE', { items: [{ signal_id: 'sig_900', market_id: 'm1', strategy: 'micro', side: 'YES', decision: 'CANDIDATE', confidence: 0.9, net_edge: 0.05, timestamp: '2026-08-11T00:00:00Z' }], total: 1 });
-  assert.ok(text('#signals-table').includes('sig_900'), 'SIGNAL_UPDATE renders signals table');
-  assert.ok(text('#signals-table').includes('CANDIDATE'), 'SIGNAL_UPDATE badge text rendered');
+  send(sock, 'SIGNAL_UPDATE', { items: [{ signal_id: 'sig_900', market_id: 'm1', strategy: 'micro', side: 'YES', decision: 'CANDIDATE', model_probability: 0.6, implied_probability: 0.5, gross_edge: 0.1, estimated_cost: null, net_edge: 0.05, confidence: 0.9, rejection_reason: null, timestamp: '2026-08-11T00:00:00Z' }], total: 1 });
+  assert.ok(text('#signals-table').includes('micro'), 'SIGNAL_UPDATE renders strategy in signals table');
+  assert.ok(text('#signals-table').includes('TRADE'), 'SIGNAL_UPDATE renders TRADE badge for CANDIDATE');
+
+  send(sock, 'SIGNAL_UPDATE', { items: [
+    { signal_id: 'sig_901', market_id: 'm1', strategy: 'micro', side: 'YES', decision: 'CANDIDATE', model_probability: 0.6, implied_probability: 0.5, gross_edge: 0.1, estimated_cost: null, net_edge: 0.05, confidence: 0.9, rejection_reason: null, timestamp: '2026-08-11T00:00:00Z' },
+    { signal_id: 'sig_902', market_id: 'm1', strategy: 'micro', side: 'NO', decision: 'NO_SIGNAL', model_probability: 0.3, implied_probability: 0.5, gross_edge: -0.2, estimated_cost: null, net_edge: -0.2, confidence: 0.4, rejection_reason: 'NET_EDGE_TOO_LOW', timestamp: '2026-08-11T00:01:00Z' },
+  ], total: 2 });
+  assert.ok(text('#signals-full-table').includes('Will Q1'), 'signals full table shows market question');
+  assert.ok(text('#signals-full-table').includes('TRADE'), 'signals full table shows TRADE badge');
+  assert.ok(text('#signals-full-table').includes('REJECTED'), 'signals full table shows REJECTED badge');
+  assert.ok(text('#signals-full-table').includes('EDGE TOO LOW'), 'signals full table shows rejection reason');
 
   send(sock, 'POSITION_UPDATE', { items: [{ position_id: 'pos_1', market_id: 'm1', side: 'YES', size: 10, average_entry: 0.5, current_price: 0.55, unrealised_pnl: 0.5, realised_pnl: 1.5 }], total: 1 });
   assert.ok(text('#positions-table').includes('pos_1'), 'POSITION_UPDATE renders positions table');
@@ -215,16 +224,35 @@ async function main() {
   send(sock, 'P&L_UPDATE', { account_balance: 2000, available_balance: 1500, today_pnl: 12.34, total_pnl: 60, realized_pnl: 45, unrealized_pnl: 15, max_drawdown: 0.02, total_exposure: 300, open_positions: 3, active_signals: 4, bot_mode: 'PAPER', circuit_breaker: null });
   assert.ok(text('#overview-cards').includes('+$12.34'), 'P&L_UPDATE renders overview cards');
 
-  send(sock, 'RISK_UPDATE', { daily_loss: 10, daily_loss_limit: 100, exposure: 50, exposure_limit: 500, consecutive_losses: 1, consecutive_loss_limit: 3, spread_status: 'OK', liquidity_status: 'OK', data_freshness: 'FRESH', circuit_breaker: null });
+  send(sock, 'RISK_UPDATE', { account_balance: 2000, available_balance: 1500, today_pnl: 12.34, daily_loss: 10, daily_loss_limit: 100, exposure: 50, exposure_pct: 10, exposure_limit: 500, consecutive_losses: 1, consecutive_loss_limit: 3, open_positions: 2, max_open_positions: 10, largest_position: 30, largest_position_market: 'm1', largest_market_exposure: 30, average_spread: 0.02, minimum_liquidity: 1500, spread_status: 'OK', liquidity_status: 'OK', data_freshness: 'FRESH', circuit_breaker: null });
   assert.ok(text('#risk-tiles').includes('Daily Loss'), 'RISK_UPDATE renders risk tiles');
+  assert.ok(text('#risk-account-cards').includes('$2,000.00'), 'RISK_UPDATE renders account risk (balance)');
+  assert.ok(text('#risk-account-cards').includes('10.0%'), 'RISK_UPDATE renders exposure %');
+  assert.ok(text('#risk-loss-cards').includes("Today's P&L"), 'RISK_UPDATE renders loss control');
+  assert.ok(text('#risk-market-cards').includes('Average Spread'), 'RISK_UPDATE renders market risk');
+  assert.ok(text('#risk-market-cards').includes('2.00%'), 'RISK_UPDATE renders average spread as pct');
+  assert.ok(text('#risk-system-cards').includes('Data Freshness'), 'RISK_UPDATE renders system risk');
+  assert.ok(text('#risk-system-cards').includes('FRESH'), 'RISK_UPDATE data freshness status');
+  assert.equal(elFor('#breaker-indicator').textContent, 'NORMAL', 'breaker indicator NORMAL');
+  assert.equal(elFor('#breaker-status').textContent, 'TRADING ENABLED', 'breaker status trading enabled');
+  assert.equal(elFor('#risk-halt-banner').hidden, true, 'no halt banner when breaker normal');
 
   send(sock, 'HEALTH_UPDATE', { healthy: true, checks: { database: { healthy: true }, api: { healthy: false }, data_freshness: { healthy: true }, model_availability: { healthy: true } }, timestamp: '2026-08-11T00:00:00Z' });
   assert.ok(text('#system-tiles').includes('ERROR'), 'HEALTH_UPDATE renders system tiles (api unhealthy)');
+  assert.ok(text('#risk-system-cards').includes('ERROR'), 'HEALTH_UPDATE marks API health ERROR on risk page');
 
   send(sock, 'CIRCUIT_BREAKER', { state: 'HALTED', reasons: ['DAILY_LOSS'], triggered_at: '2026-08-11T00:00:00Z' });
   assert.ok(text('#risk-tiles').includes('HALTED'), 'CIRCUIT_BREAKER reflects on risk tiles');
   assert.equal(elFor('#mode-label').textContent, 'SYSTEM HALTED', 'CIRCUIT_BREAKER halts mode badge');
   assert.ok(elFor('#mode-badge').classes.has('mode-halted'), 'mode badge carries halted class');
+  assert.equal(elFor('#breaker-indicator').textContent, 'HALTED', 'breaker indicator HALTED');
+  assert.equal(elFor('#breaker-status').textContent, 'TRADING DISABLED', 'breaker status trading disabled');
+  assert.ok(elFor('#breaker-panel').classes.has('breaker-halted'), 'breaker panel carries halted class');
+  assert.ok(text('#breaker-reasons').includes('DAILY LOSS LIMIT REACHED'), 'breaker reasons humanized');
+  assert.equal(elFor('#risk-halt-banner').hidden, false, 'TRADING DISABLED banner shown when halted');
+  assert.equal(elFor('#breaker-status').textContent, 'TRADING DISABLED', 'trading disabled is explicit');
+  assert.ok(text('#risk-halt-reasons').includes('DAILY LOSS LIMIT REACHED'), 'halt banner lists reasons');
+  assert.ok(text('#risk-system-cards').includes('ERROR'), 'risk engine health ERROR while halted');
 
   /* --- heartbeats are ignored --- */
   send(sock, 'PING', null);

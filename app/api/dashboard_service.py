@@ -277,7 +277,12 @@ async def build_overview(db: Database) -> DashboardOverviewResponse:
 
 
 async def build_risk(db: Database) -> DashboardRiskResponse:
-    """Assemble the dashboard Risk payload."""
+    """Assemble the dashboard Risk payload.
+
+    All values are read-only aggregates of persisted state and public
+    configuration.  Nothing here gates or mutates trading — the
+    circuit-breaker state is read, never written.
+    """
     position_repo = PositionRepository(db)
     pnl = await position_repo.pnl_summary()
     account_balance = (
@@ -285,14 +290,57 @@ async def build_risk(db: Database) -> DashboardRiskResponse:
     )
     today = await today_pnl(db)
     exposure = await _notional_exposure(db)
+    exposure_limit = round(account_balance * settings.max_total_exposure_pct, 6)
+    open_positions = await position_repo.list_open()
+
+    # Largest single position by notional (size × current price).
+    largest_position = 0.0
+    largest_position_market: str | None = None
+    for p in open_positions:
+        notional = float(p.size or 0.0) * float(p.current_price or 0.0)
+        if notional > largest_position:
+            largest_position = notional
+            largest_position_market = p.market_id
+
+    # Largest per-market exposure (notional, summed across sides).
+    per_market: dict[str, float] = {}
+    for p in open_positions:
+        per_market[p.market_id] = per_market.get(p.market_id, 0.0) + (
+            float(p.size or 0.0) * float(p.current_price or 0.0)
+        )
+    largest_market_exposure = max(per_market.values(), default=0.0)
+
+    # Average spread across each market's latest snapshot.
+    spreads: list[float] = []
+    for row in await SnapshotRepository(db).latest_spreads():
+        spread = row["spread"]
+        if isinstance(spread, (int, float)):
+            spreads.append(float(spread))
+    average_spread = round(sum(spreads) / len(spreads), 6) if spreads else None
+
+    # Minimum observed liquidity across known markets.
+    markets = await MarketRepository(db).list_all()
+    liquidities = [float(m.liquidity) for m in markets if m.liquidity is not None]
+    minimum_liquidity = min(liquidities) if liquidities else None
 
     return DashboardRiskResponse(
+        account_balance=round(account_balance, 6),
+        available_balance=round(account_balance - exposure, 6),
+        exposure=round(exposure, 6),
+        exposure_pct=round(exposure / exposure_limit * 100, 4) if exposure_limit > 0 else 0.0,
+        exposure_limit=exposure_limit,
+        today_pnl=today,
         daily_loss=round(max(0.0, -today), 6),
         daily_loss_limit=round(account_balance * settings.max_daily_loss_pct, 6),
-        exposure=exposure,
-        exposure_limit=round(account_balance * settings.max_total_exposure_pct, 6),
         consecutive_losses=await consecutive_losses(db),
         consecutive_loss_limit=settings.max_consecutive_losses,
+        open_positions=len(open_positions),
+        max_open_positions=settings.max_open_positions,
+        largest_position=round(largest_position, 6),
+        largest_position_market=largest_position_market,
+        largest_market_exposure=round(largest_market_exposure, 6),
+        average_spread=average_spread,
+        minimum_liquidity=minimum_liquidity,
         spread_status=await spread_status(db),
         liquidity_status=await liquidity_status(db),
         data_freshness=await data_freshness_status(db),

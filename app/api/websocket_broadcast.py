@@ -241,9 +241,19 @@ class DashboardBroadcaster:
         risk = await dashboard_service.build_risk(db)
         breaker = risk.circuit_breaker
         token = (
+            round(risk.account_balance, 6),
+            round(risk.available_balance, 6),
+            round(risk.today_pnl, 6),
             round(risk.daily_loss, 6),
             round(risk.exposure, 6),
+            round(risk.exposure_pct, 6),
+            round(risk.exposure_limit, 6),
             risk.consecutive_losses,
+            risk.open_positions,
+            round(risk.largest_position, 6),
+            round(risk.largest_market_exposure, 6),
+            round(risk.average_spread or 0.0, 6),
+            round(risk.minimum_liquidity or 0.0, 6),
             risk.spread_status,
             risk.liquidity_status,
             risk.data_freshness,

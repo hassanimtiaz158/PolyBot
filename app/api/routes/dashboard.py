@@ -77,11 +77,39 @@ async def get_dashboard_signals(
     decision: str | None = Query(
         None, min_length=1, max_length=32, description="Filter by decision"
     ),
+    strategy: str | None = Query(
+        None, min_length=1, max_length=64, description="Filter by strategy"
+    ),
+    market_id: str | None = Query(
+        None, min_length=1, max_length=128, description="Filter by market"
+    ),
+    min_edge: float | None = Query(
+        None, description="Minimum net edge threshold"
+    ),
+    min_confidence: float | None = Query(
+        None, description="Minimum confidence threshold"
+    ),
+    sort_by: str | None = Query(
+        None,
+        description="Sort column (timestamp, net_edge, confidence, gross_edge, "
+        "model_probability, implied_probability)",
+    ),
+    sort_order: str = Query(
+        "desc", description="Sort direction: asc or desc"
+    ),
 ) -> PaginatedResponse[SignalResponse]:
     """Return a paginated list of signals for the dashboard."""
     repo = SignalRepository(db)
     items, total = await repo.list_paginated(
-        limit=limit, offset=offset, decision=decision or None
+        limit=limit,
+        offset=offset,
+        decision=decision or None,
+        strategy=strategy or None,
+        market_id=market_id or None,
+        min_edge=min_edge,
+        min_confidence=min_confidence,
+        sort_by=sort_by or None,
+        sort_order=sort_order,
     )
     return PaginatedResponse(
         items=[SignalResponse.model_validate(s) for s in items],

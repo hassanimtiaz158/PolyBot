@@ -312,6 +312,16 @@ const state = {
   wsActive: false,
 };
 
+const signalsFilter = {
+  strategy: '',
+  market: '',
+  decision: '',
+  minEdge: null,
+  minConfidence: null,
+  sortBy: null,
+  sortDir: 'desc',
+};
+
 /* ================================================================
    Loaders — map API payloads into render-friendly shapes.
    The map* functions are shared with the WebSocket event handlers so
@@ -342,8 +352,14 @@ function mapSignals(d) {
     strategy: s.strategy,
     side: s.side,
     decision: s.decision,
+    modelProbability: s.model_probability,
+    impliedProbability: s.implied_probability,
+    grossEdge: s.gross_edge,
+    estimatedCost: s.estimated_cost,
+    netEdge: s.net_edge,
     confidence: s.confidence,
-    edge: s.net_edge,
+    rejectionReason: s.rejection_reason,
+    timestamp: s.timestamp,
     time: fmtDateTime(s.timestamp),
   }));
 }
@@ -387,12 +403,23 @@ function mapOrders(d) {
 
 function mapRisk(d) {
   return {
+    accountBalance: d.account_balance,
+    availableBalance: d.available_balance,
+    exposure: d.exposure,
+    exposurePct: d.exposure_pct,
+    exposureLimit: d.exposure_limit,
+    todayPnl: d.today_pnl,
     dailyLoss: d.daily_loss,
     dailyLossLimit: d.daily_loss_limit,
-    exposure: d.exposure,
-    exposureLimit: d.exposure_limit,
     consecutiveLosses: d.consecutive_losses,
     consecutiveLossLimit: d.consecutive_loss_limit,
+    openPositions: d.open_positions,
+    maxOpenPositions: d.max_open_positions,
+    largestPosition: d.largest_position,
+    largestPositionMarket: d.largest_position_market,
+    largestMarketExposure: d.largest_market_exposure,
+    averageSpread: d.average_spread,
+    minimumLiquidity: d.minimum_liquidity,
     spreadStatus: d.spread_status,
     liquidityStatus: d.liquidity_status,
     dataFreshness: d.data_freshness,
@@ -414,7 +441,7 @@ async function loadEquity() {
 }
 
 async function loadSignals() {
-  const d = await fetchJSON('/api/dashboard/signals?limit=50');
+  const d = await fetchJSON('/api/dashboard/signals?limit=100');
   state.groups.signals.data = mapSignals(d);
 }
 
@@ -750,6 +777,7 @@ const WS_HANDLERS = {
   RISK_UPDATE(data) {
     applyWSGroup('risk', mapRisk(data));
     renderRisk();
+    renderRiskPage();
     renderSystem();
     updateDataStatus();
   },
@@ -758,6 +786,7 @@ const WS_HANDLERS = {
     applyWSGroup('health', data);
     renderSystem();
     renderRisk();
+    renderRiskPage();
     updateDataStatus();
   },
 
@@ -772,6 +801,7 @@ const WS_HANDLERS = {
     const overview = state.groups.overview.data;
     if (overview) overview.circuitBreaker = breaker;
     renderRisk();
+    renderRiskPage();
     renderSystem();
     updateModeBadge();
     updateDataStatus();
@@ -850,10 +880,65 @@ function marketQuestion(marketId) {
    Status / badge helpers
    ================================================================ */
 
+const DECISION_LABELS = {
+  TRADE: 'TRADE',
+  CANDIDATE: 'TRADE',
+  SKIP: 'SKIP',
+  NO_SIGNAL: 'SKIP',
+  REJECTED: 'REJECTED',
+  WAIT: 'WAIT',
+};
+
+const DECISION_LEVEL = {
+  TRADE: 'HEALTHY',
+  CANDIDATE: 'HEALTHY',
+  SKIP: 'WARNING',
+  NO_SIGNAL: 'WARNING',
+  REJECTED: 'ERROR',
+  WAIT: 'WARNING',
+};
+
+const REJECTION_LABELS = {
+  EDGE_TOO_LOW: 'EDGE TOO LOW',
+  LOW_CONFIDENCE: 'LOW CONFIDENCE',
+  STALE_DATA: 'STALE DATA',
+  HIGH_SPREAD: 'HIGH SPREAD',
+  LOW_LIQUIDITY: 'LOW LIQUIDITY',
+  RISK_LIMIT: 'RISK LIMIT',
+  MODEL_UNCERTAIN: 'MODEL UNCERTAIN',
+  NET_EDGE_TOO_LOW: 'EDGE TOO LOW',
+  NET_EDGE_BELOW_THRESHOLD: 'EDGE TOO LOW',
+  CONFIDENCE_BELOW_THRESHOLD: 'LOW CONFIDENCE',
+  CONFIDENCE_TOO_LOW: 'LOW CONFIDENCE',
+  SPREAD_TOO_HIGH: 'HIGH SPREAD',
+  LIQUIDITY_TOO_LOW: 'LOW LIQUIDITY',
+  SYSTEM_HALTED: 'SYSTEM HALTED',
+  DAILY_LOSS_LIMIT_REACHED: 'DAILY LOSS LIMIT',
+  CONSECUTIVE_LOSS_LIMIT_REACHED: 'CONSECUTIVE LOSSES',
+  MAX_OPEN_POSITIONS_REACHED: 'MAX POSITIONS',
+  TOTAL_EXPOSURE_TOO_HIGH: 'EXPOSURE LIMIT',
+  POSITION_SIZE_EXCEEDS_MAX: 'POSITION SIZE',
+  MARKET_EXPOSURE_TOO_HIGH: 'MARKET EXPOSURE',
+  INVALID_DATA: 'INVALID DATA',
+};
+
+function humanizeRejection(reason) {
+  if (!reason) return '';
+  return REJECTION_LABELS[reason] || reason.replace(/_/g, ' ');
+}
+
+function resolveDecision(signal) {
+  if (signal.decision === 'CANDIDATE' || signal.decision === 'TRADE') return 'TRADE';
+  if (signal.decision === 'NO_SIGNAL' || signal.decision === 'SKIP') {
+    return signal.rejectionReason ? 'REJECTED' : 'SKIP';
+  }
+  return signal.decision || 'WAIT';
+}
+
 function decisionBadge(decision) {
-  if (decision === 'CANDIDATE') return statusBadge('HEALTHY', 'CANDIDATE');
-  if (decision === 'NO_SIGNAL') return statusBadge('WARNING', 'NO_SIGNAL');
-  return statusBadge('ERROR', decision || 'UNKNOWN');
+  const label = DECISION_LABELS[decision] || decision || 'UNKNOWN';
+  const level = DECISION_LEVEL[decision] || 'WARNING';
+  return statusBadge(level, label);
 }
 
 const ORDER_STATUS_LEVEL = {
@@ -887,15 +972,37 @@ const groupLevel = (g) => (g.status === 'ok' ? 'HEALTHY' : g.status === 'error' 
    Table column descriptors
    ================================================================ */
 
-const signalColumns = [
-  { key: 'id', label: 'Signal' },
+const overviewSignalColumns = [
   { key: 'market', label: 'Market', render: (r) => shortMarket(marketQuestion(r.market)) },
   { key: 'strategy', label: 'Strategy' },
   { key: 'side', label: 'Side', align: 'center' },
-  { key: 'decision', label: 'Decision', render: (r) => decisionBadge(r.decision) },
-  { key: 'confidence', label: 'Conf.', align: 'right', render: (r) => optPct1(r.confidence) },
-  { key: 'edge', label: 'Net Edge', align: 'right', render: (r) => (r.edge == null ? '—' : r.edge > 0 ? `+${optPct2(r.edge)}` : optPct2(r.edge)) },
+  { key: 'decision', label: 'Decision', render: (r) => { const d = resolveDecision(r); return decisionBadge(d); } },
+  { key: 'confidence', label: 'Conf.', align: 'right', render: (r) => (r.confidence == null ? '—' : pct1(r.confidence * 100)) },
+  { key: 'netEdge', label: 'Net Edge', align: 'right', render: (r) => (r.netEdge == null ? '—' : r.netEdge > 0 ? `+${pct2(r.netEdge)}` : pct2(r.netEdge)) },
   { key: 'time', label: 'Time' },
+];
+
+const signalColumns = [
+  { key: 'market', label: 'Market', render: (r) => shortMarket(marketQuestion(r.market)) },
+  { key: 'outcome', label: 'Outcome', render: (r) => r.side || '—' },
+  { key: 'strategy', label: 'Strategy' },
+  { key: 'currentPrice', label: 'Current Price', align: 'right', render: (r) => (r.modelProbability == null ? '—' : r.modelProbability.toFixed(3)) },
+  { key: 'modelProbability', label: 'Model Probability', align: 'right', render: (r) => (r.modelProbability == null ? '—' : pct1(r.modelProbability * 100)) },
+  { key: 'impliedProbability', label: 'Implied Probability', align: 'right', render: (r) => (r.impliedProbability == null ? '—' : pct1(r.impliedProbability * 100)) },
+  { key: 'grossEdge', label: 'Gross Edge', align: 'right', render: (r) => (r.grossEdge == null ? '—' : r.grossEdge > 0 ? `+${pct2(r.grossEdge)}` : pct2(r.grossEdge)) },
+  { key: 'estimatedCost', label: 'Est. Costs', align: 'right', render: (r) => (r.estimatedCost == null ? '—' : money(r.estimatedCost)) },
+  { key: 'netEdge', label: 'Net Edge', align: 'right', render: (r) => (r.netEdge == null ? '—' : r.netEdge > 0 ? `+${pct2(r.netEdge)}` : pct2(r.netEdge)) },
+  { key: 'confidence', label: 'Confidence', align: 'right', render: (r) => (r.confidence == null ? '—' : pct1(r.confidence * 100)) },
+  { key: 'liquidity', label: 'Liquidity', align: 'right', render: (r) => '—' },
+  { key: 'spread', label: 'Spread', align: 'right', render: (r) => '—' },
+  { key: 'timeToResolution', label: 'Time to Resolution', render: (r) => '—' },
+  { key: 'time', label: 'Signal Time' },
+  { key: 'decision', label: 'Decision', render: (r) => { const d = resolveDecision(r); return decisionBadge(d); } },
+  { key: 'rejectionReason', label: 'Rejection Reason', render: (r) => {
+    const reason = r.rejectionReason;
+    if (!reason) return '—';
+    return statusBadge('ERROR', humanizeRejection(reason));
+  }},
 ];
 
 const positionColumns = [
@@ -971,7 +1078,7 @@ function renderSignalsTable() {
   if (g.status === 'error') return renderTableMessage(table, 'Unable to load live data', 'error');
   if (g.status === 'loading' || g.status === 'idle') return renderTableMessage(table, 'Loading live data…');
   const candidates = g.data.filter((s) => s.decision === 'CANDIDATE');
-  renderTable(table, 'Active strategy signals', signalColumns, candidates, 'No active signals');
+  renderTable(table, 'Active strategy signals', overviewSignalColumns, candidates, 'No active signals');
 }
 
 function renderSignalsFullTable() {
@@ -979,7 +1086,143 @@ function renderSignalsFullTable() {
   const table = $('#signals-full-table');
   if (g.status === 'error') return renderTableMessage(table, 'Unable to load live data', 'error');
   if (g.status === 'loading' || g.status === 'idle') return renderTableMessage(table, 'Loading live data…');
-  renderTable(table, 'All strategy signals', signalColumns, g.data, 'No signals yet');
+  renderSignalsPage(table);
+}
+
+/* ================================================================
+   Signals page — filtering + sorting
+   ================================================================ */
+
+function getFilteredSignals() {
+  const g = state.groups.signals;
+  if (!g.data) return [];
+  let rows = g.data;
+
+  if (signalsFilter.strategy) {
+    rows = rows.filter((r) => r.strategy === signalsFilter.strategy);
+  }
+  if (signalsFilter.market) {
+    rows = rows.filter((r) => r.market === signalsFilter.market);
+  }
+  if (signalsFilter.decision) {
+    rows = rows.filter((r) => resolveDecision(r) === signalsFilter.decision);
+  }
+  if (signalsFilter.minEdge != null) {
+    rows = rows.filter((r) => r.netEdge != null && r.netEdge >= signalsFilter.minEdge);
+  }
+  if (signalsFilter.minConfidence != null) {
+    rows = rows.filter((r) => r.confidence != null && r.confidence >= signalsFilter.minConfidence);
+  }
+
+  if (signalsFilter.sortBy) {
+    const key = signalsFilter.sortBy;
+    const dir = signalsFilter.sortDir === 'asc' ? 1 : -1;
+    rows = [...rows].sort((a, b) => {
+      const av = a[key];
+      const bv = b[key];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === 'string') return av.localeCompare(bv) * dir;
+      return (av - bv) * dir;
+    });
+  }
+
+  return rows;
+}
+
+function populateFilterDropdowns() {
+  const g = state.groups.signals;
+  if (!g.data) return;
+  const stratSelect = $('#filter-strategy');
+  const mktSelect = $('#filter-market');
+  if (!stratSelect || !mktSelect) return;
+
+  const strategySet = new Set();
+  const marketSet = new Set();
+  g.data.forEach((s) => {
+    if (s.strategy) strategySet.add(s.strategy);
+    if (s.market) marketSet.add(s.market);
+  });
+
+  const currentStrat = stratSelect.value;
+  stratSelect.innerHTML = '<option value="">All Strategies</option>';
+  [...strategySet].sort().forEach((s) => {
+    const opt = document.createElement('option');
+    opt.value = s;
+    opt.textContent = s;
+    stratSelect.appendChild(opt);
+  });
+  stratSelect.value = currentStrat;
+
+  const currentMkt = mktSelect.value;
+  mktSelect.innerHTML = '<option value="">All Markets</option>';
+  [...marketSet].sort().forEach((m) => {
+    const opt = document.createElement('option');
+    opt.value = m;
+    opt.textContent = shortMarket(marketQuestion(m));
+    mktSelect.appendChild(opt);
+  });
+  mktSelect.value = currentMkt;
+}
+
+function renderSignalsSummary(total, filtered) {
+  const el = $('#signals-summary');
+  if (!el) return;
+  if (total === filtered) {
+    el.textContent = `${filtered} signal${filtered !== 1 ? 's' : ''}`;
+  } else {
+    el.textContent = `Showing ${filtered} of ${total} signals`;
+  }
+}
+
+function renderSignalsPage(tableEl) {
+  const g = state.groups.signals;
+  const table = tableEl || $('#signals-full-table');
+  if (!table) return;
+  if (g.status === 'error') return renderTableMessage(table, 'Unable to load live data', 'error');
+  if (g.status === 'loading' || g.status === 'idle') return renderTableMessage(table, 'Loading live data…');
+
+  populateFilterDropdowns();
+  const filtered = getFilteredSignals();
+  renderSignalsSummary(g.data.length, filtered.length);
+  renderTable(table, 'Signal analysis', signalColumns, filtered, 'No signals match filters');
+}
+
+function initSignalsFilters() {
+  const bind = (sel, key, transform) => {
+    const el = $(sel);
+    if (!el) return;
+    el.addEventListener('input', () => {
+      signalsFilter[key] = transform ? transform(el.value) : el.value;
+      renderSignalsPage();
+    });
+  };
+
+  bind('#filter-strategy', 'strategy');
+  bind('#filter-market', 'market');
+  bind('#filter-decision', 'decision');
+  bind('#filter-min-edge', 'minEdge', (v) => v === '' ? null : parseFloat(v) || null);
+  bind('#filter-min-confidence', 'minConfidence', (v) => v === '' ? null : parseFloat(v) || null);
+
+  const resetBtn = $('#filter-reset');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', () => {
+      signalsFilter.strategy = '';
+      signalsFilter.market = '';
+      signalsFilter.decision = '';
+      signalsFilter.minEdge = null;
+      signalsFilter.minConfidence = null;
+      signalsFilter.sortBy = null;
+      signalsFilter.sortDir = 'desc';
+      $('#filter-strategy').value = '';
+      $('#filter-market').value = '';
+      $('#filter-decision').value = '';
+      $('#filter-min-edge').value = '';
+      $('#filter-min-confidence').value = '';
+      renderSignalsPage();
+    });
+  }
 }
 
 function renderMarketsTable() {
@@ -1116,7 +1359,251 @@ function buildRiskTiles() {
 function renderRisk() {
   const tiles = buildRiskTiles();
   renderTiles($('#risk-tiles'), tiles);
-  renderTiles($('#risk-tiles-view'), tiles);
+  const detail = $('#risk-tiles-view');
+  if (detail) renderTiles(detail, tiles);
+}
+
+/* ================================================================
+   Dedicated Risk page (view-risk)
+   Renders only backend-computed values — no client-side derivation
+   of risk controls.  The circuit breaker state and its reasons come
+   straight from the read-only API; nothing here can re-enable
+   trading or change limits.
+   ================================================================ */
+
+const REASON_LABELS = {
+  DAILY_LOSS: 'DAILY LOSS LIMIT REACHED',
+  DAILY_LOSS_LIMIT: 'DAILY LOSS LIMIT REACHED',
+  STALE_DATA: 'STALE MARKET DATA',
+  STALE_MARKET_DATA: 'STALE MARKET DATA',
+  HIGH_SPREAD: 'HIGH SPREAD',
+  LOW_LIQUIDITY: 'LOW LIQUIDITY',
+  API_HEALTH: 'API DISCONNECTED',
+  API_DISCONNECTED: 'API DISCONNECTED',
+  MODEL_UNAVAILABLE: 'MODEL UNAVAILABLE',
+  CONSECUTIVE_LOSSES: 'CONSECUTIVE LOSSES LIMIT',
+};
+
+function humanizeReason(reason) {
+  if (REASON_LABELS[reason]) return REASON_LABELS[reason];
+  return String(reason || 'UNKNOWN').replace(/_/g, ' ');
+}
+
+function riskCard({ label, value, status, sub, tone, pct, highlight = false }) {
+  const card = el('article', 'risk-card' + (highlight ? ' highlight' : ''));
+  card.append(el('span', 'risk-card-label', label));
+  const row = el('div', 'risk-card-row');
+  const valueEl = el('span', `risk-card-value ${tone || ''}`, value);
+  row.appendChild(valueEl);
+  if (status) row.appendChild(statusBadge(status));
+  card.appendChild(row);
+  if (sub) card.append(el('span', 'risk-card-sub', sub));
+  if (pct != null) {
+    const bar = el('div', 'risk-card-bar');
+    const fill = el('i', `tile-bar-fill bar-${String(status || 'HEALTHY').toLowerCase()}`);
+    fill.style.width = `${clamp(pct, 0, 100)}%`;
+    bar.appendChild(fill);
+    card.appendChild(bar);
+  }
+  return card;
+}
+
+function renderRiskSection(sel, cards) {
+  const container = $(sel);
+  if (!container) return;
+  container.replaceChildren(...cards);
+}
+
+function riskSectionMessage(sel, message, level) {
+  const container = $(sel);
+  if (container) container.replaceChildren(el('p', `risk-empty ${level || 'info'}`, message));
+}
+
+function buildAccountRiskCards(r) {
+  if (!r) return [riskCard({ label: 'Balance', value: '—', status: 'WARNING' })];
+  const exposureStatus = ratioLevel(r.exposure, r.exposureLimit);
+  return [
+    riskCard({
+      label: 'Balance',
+      value: money(r.accountBalance),
+      sub: 'initial equity + realised/unrealised P&L',
+      highlight: true,
+    }),
+    riskCard({ label: 'Available Balance', value: money(r.availableBalance), sub: 'balance minus notional exposure' }),
+    riskCard({
+      label: 'Total Exposure',
+      value: moneyInt(r.exposure),
+      status: exposureStatus,
+      pct: ratioPct(r.exposure, r.exposureLimit),
+      sub: `notional (size × price) · limit ${moneyInt(r.exposureLimit)}`,
+    }),
+    riskCard({
+      label: 'Exposure %',
+      value: pct1(r.exposurePct),
+      status: exposureStatus,
+      sub: 'of maximum exposure',
+    }),
+    riskCard({ label: 'Maximum Exposure', value: moneyInt(r.exposureLimit), sub: 'config max_total_exposure_pct' }),
+  ];
+}
+
+function buildLossControlCards(r) {
+  if (!r) return [riskCard({ label: "Today's P&L", value: '—', status: 'WARNING' })];
+  return [
+    riskCard({ label: "Today's P&L", value: signedMoney(r.todayPnl), tone: pnlTone(r.todayPnl), sub: 'filled orders since midnight UTC' }),
+    riskCard({
+      label: 'Daily Loss',
+      value: money(r.dailyLoss),
+      status: ratioLevel(r.dailyLoss, r.dailyLossLimit),
+      pct: ratioPct(r.dailyLoss, r.dailyLossLimit),
+    }),
+    riskCard({ label: 'Daily Loss Limit', value: money(r.dailyLossLimit), sub: 'config max_daily_loss_pct' }),
+    riskCard({
+      label: 'Consecutive Losses',
+      value: `${r.consecutiveLosses} / ${r.consecutiveLossLimit}`,
+      status: ratioLevel(r.consecutiveLosses, r.consecutiveLossLimit),
+      pct: ratioPct(r.consecutiveLosses, r.consecutiveLossLimit),
+    }),
+    riskCard({ label: 'Maximum Consecutive Losses', value: num(r.consecutiveLossLimit), sub: 'config max_consecutive_losses' }),
+  ];
+}
+
+function buildMarketRiskCards(r) {
+  if (!r) return [riskCard({ label: 'Open Positions', value: '—', status: 'WARNING' })];
+  const largestMarket = r.largestPositionMarket
+    ? shortMarket(marketQuestion(r.largestPositionMarket))
+    : '—';
+  const spreadStatus =
+    r.spreadStatus === 'HIGH' ? 'ERROR' : r.spreadStatus === 'OK' ? 'HEALTHY' : 'WARNING';
+  const liquidityStatus =
+    r.liquidityStatus === 'LOW' ? 'ERROR' : r.liquidityStatus === 'OK' ? 'HEALTHY' : 'WARNING';
+  return [
+    riskCard({
+      label: 'Open Positions',
+      value: num(r.openPositions),
+      status: ratioLevel(r.openPositions, r.maxOpenPositions),
+      pct: ratioPct(r.openPositions, r.maxOpenPositions),
+      sub: `of max ${num(r.maxOpenPositions)}`,
+    }),
+    riskCard({ label: 'Largest Position', value: money(r.largestPosition), sub: largestMarket }),
+    riskCard({ label: 'Largest Market Exposure', value: money(r.largestMarketExposure), sub: 'single-market notional' }),
+    riskCard({ label: 'Average Spread', value: r.averageSpread == null ? '—' : pct2(r.averageSpread), status: spreadStatus }),
+    riskCard({ label: 'Minimum Liquidity', value: r.minimumLiquidity == null ? '—' : money(r.minimumLiquidity), status: liquidityStatus }),
+  ];
+}
+
+function buildSystemRiskCards(r, health) {
+  const level = (name) =>
+    health && health.checks && health.checks[name]
+      ? checkHealthy(health.checks[name].healthy)
+      : 'UNAVAILABLE';
+  const breaker = r ? r.circuitBreaker : null;
+  const breakerHalted = breaker && (breaker.state === 'HALTED' || breaker.state === 'TRIPPED');
+  const breakerWarning = breaker && breaker.state === 'WARNING';
+
+  let riskEngine;
+  if (state.killArmed || breakerHalted) riskEngine = 'ERROR';
+  else if (breakerWarning || (r && (r.spreadStatus === 'HIGH' || r.liquidityStatus === 'LOW'))) {
+    riskEngine = 'WARNING';
+  } else riskEngine = 'HEALTHY';
+
+  const freshness =
+    !r ? 'UNAVAILABLE'
+      : r.dataFreshness === 'FRESH' ? 'HEALTHY'
+        : r.dataFreshness === 'STALE' ? 'ERROR'
+          : 'WARNING';
+
+  return [
+    riskCard({ label: 'Data Freshness', value: r ? r.dataFreshness : '—', status: freshness }),
+    riskCard({ label: 'API Health', value: level('api'), status: level('api') }),
+    riskCard({ label: 'Model Health', value: level('model_availability'), status: level('model_availability') }),
+    riskCard({ label: 'Database Health', value: level('database'), status: level('database') }),
+    riskCard({ label: 'Risk Engine Health', value: riskEngine, status: riskEngine }),
+  ];
+}
+
+function renderBreaker(r) {
+  const panel = $('#breaker-panel');
+  if (!panel) return;
+  const breaker = r ? r.circuitBreaker : null;
+  const stateStr = breaker && breaker.state ? String(breaker.state).toUpperCase() : 'NORMAL';
+  const halted = stateStr === 'HALTED' || stateStr === 'TRIPPED';
+  const warning = stateStr === 'WARNING';
+  const level = halted ? 'error' : warning ? 'warning' : 'healthy';
+
+  panel.classList.remove('breaker-normal', 'breaker-warning', 'breaker-halted');
+  panel.classList.add(halted ? 'breaker-halted' : warning ? 'breaker-warning' : 'breaker-normal');
+
+  const indicator = $('#breaker-indicator');
+  if (indicator) {
+    indicator.textContent = stateStr;
+    indicator.className = `breaker-indicator ${level}`;
+  }
+  const statusEl = $('#breaker-status');
+  if (statusEl) {
+    statusEl.textContent = halted
+      ? 'TRADING DISABLED'
+      : warning
+        ? 'TRADING PERMITTED — CAUTION'
+        : 'TRADING ENABLED';
+    statusEl.className = `breaker-status ${level}`;
+  }
+
+  const reasons = $('#breaker-reasons');
+  if (reasons) {
+    reasons.replaceChildren();
+    const reasonList = breaker && breaker.reasons ? breaker.reasons : [];
+    if (reasonList.length) {
+      reasons.append(el('p', 'breaker-reasons-title', 'REASONS'));
+      reasonList.forEach((reason) => {
+        reasons.appendChild(el('span', 'breaker-reason', humanizeReason(reason)));
+      });
+    } else if (halted || warning) {
+      reasons.append(el('p', 'breaker-reasons-title', 'No reasons recorded by backend'));
+    }
+  }
+
+  const banner = $('#risk-halt-banner');
+  if (banner) {
+    banner.hidden = !(halted || state.killArmed);
+    const list = $('#risk-halt-reasons');
+    if (list) {
+      list.replaceChildren();
+      const reasonList = breaker && breaker.reasons ? breaker.reasons : [];
+      if (reasonList.length) {
+        reasonList.forEach((reason) => {
+          list.appendChild(el('li', null, humanizeReason(reason)));
+        });
+      } else {
+        list.appendChild(el('li', null, 'Halt triggered by the backend risk engine.'));
+      }
+    }
+  }
+}
+
+function renderRiskPage() {
+  const g = state.groups.risk;
+  const health = state.groups.health;
+  const sections = ['#risk-account-cards', '#risk-loss-cards', '#risk-market-cards', '#risk-system-cards'];
+  if (!$('#risk-account-cards')) return;
+
+  if (g.status === 'error') {
+    const message = `Unable to load live risk data — ${describeError(g.error)}`;
+    sections.forEach((sel) => riskSectionMessage(sel, message, 'error'));
+    renderBreaker(null);
+    return;
+  }
+  if (g.status === 'loading' || g.status === 'idle') {
+    sections.forEach((sel) => riskSectionMessage(sel, 'Loading live risk data…'));
+    renderBreaker(null);
+    return;
+  }
+  const r = g.data;
+  renderRiskSection('#risk-account-cards', buildAccountRiskCards(r));
+  renderRiskSection('#risk-loss-cards', buildLossControlCards(r));
+  renderRiskSection('#risk-market-cards', buildMarketRiskCards(r));
+  renderRiskSection('#risk-system-cards', buildSystemRiskCards(r, health.status === 'ok' ? health.data : null));
+  renderBreaker(r);
 }
 
 function buildSystemTiles() {
@@ -1194,6 +1681,7 @@ function renderAll() {
   renderAuditTable();
   renderPerformanceCards();
   renderRisk();
+  renderRiskPage();
   renderSystem();
   updateModeBadge();
   updateCharts();
@@ -1421,6 +1909,7 @@ function init() {
   renderAll();
   initNav();
   initKillSwitch();
+  initSignalsFilters();
   startScheduler();
   connectWS();
 }

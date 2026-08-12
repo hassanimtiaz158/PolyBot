@@ -228,6 +228,66 @@ class TestDashboardLists:
         assert by_decision.json()["pagination"]["total"] == 2
 
     @pytest.mark.asyncio
+    async def test_signals_filter_by_strategy(self, client: httpx.AsyncClient):
+        resp = await client.get(
+            "/api/dashboard/signals", params={"strategy": "microstructure"}
+        )
+        body = resp.json()
+        assert body["pagination"]["total"] == 2
+        assert all(item["strategy"] == "microstructure" for item in body["items"])
+
+    @pytest.mark.asyncio
+    async def test_signals_filter_by_market(self, client: httpx.AsyncClient):
+        resp = await client.get(
+            "/api/dashboard/signals", params={"market_id": "mkt_001"}
+        )
+        body = resp.json()
+        assert body["pagination"]["total"] == 2
+        assert all(item["market_id"] == "mkt_001" for item in body["items"])
+
+    @pytest.mark.asyncio
+    async def test_signals_filter_by_min_edge(self, client: httpx.AsyncClient):
+        resp = await client.get(
+            "/api/dashboard/signals", params={"min_edge": 0.04}
+        )
+        body = resp.json()
+        assert body["pagination"]["total"] == 3
+        assert all(item["net_edge"] >= 0.04 for item in body["items"])
+
+    @pytest.mark.asyncio
+    async def test_signals_filter_by_min_confidence(self, client: httpx.AsyncClient):
+        resp = await client.get(
+            "/api/dashboard/signals", params={"min_confidence": 0.8}
+        )
+        body = resp.json()
+        assert body["pagination"]["total"] == 3
+        assert all(item["confidence"] >= 0.8 for item in body["items"])
+
+    @pytest.mark.asyncio
+    async def test_signals_sort_by_net_edge(self, client: httpx.AsyncClient):
+        resp = await client.get(
+            "/api/dashboard/signals",
+            params={"sort_by": "net_edge", "sort_order": "desc"},
+        )
+        body = resp.json()
+        edges = [item["net_edge"] for item in body["items"]]
+        assert edges == sorted(edges, reverse=True)
+
+    @pytest.mark.asyncio
+    async def test_signals_combined_filters(self, client: httpx.AsyncClient):
+        resp = await client.get(
+            "/api/dashboard/signals",
+            params={
+                "strategy": "microstructure",
+                "decision": "CANDIDATE",
+                "min_edge": 0.03,
+            },
+        )
+        body = resp.json()
+        assert body["pagination"]["total"] == 1
+        assert body["items"][0]["signal_id"] == "sig_001"
+
+    @pytest.mark.asyncio
     async def test_markets_list_and_pagination(self, client: httpx.AsyncClient):
         resp = await client.get("/api/dashboard/markets", params={"limit": 2})
         body = resp.json()
@@ -316,6 +376,52 @@ class TestRisk:
         assert body["liquidity_status"] == "OK"
         assert body["data_freshness"] in ("FRESH", "STALE")
         assert body["circuit_breaker"] is None
+
+    @pytest.mark.asyncio
+    async def test_returns_account_and_loss_control_fields(
+        self, client: httpx.AsyncClient
+    ):
+        body = (await client.get("/api/dashboard/risk")).json()
+        account = settings.initial_equity + 4.75
+        exposure_limit = round(account * settings.max_total_exposure_pct, 6)
+        assert body["account_balance"] == round(account, 6)
+        assert body["available_balance"] == round(account - 8.25, 6)
+        assert body["today_pnl"] == 0.0
+        assert body["exposure_pct"] == round(8.25 / exposure_limit * 100, 4)
+        assert body["daily_loss_limit"] == round(
+            account * settings.max_daily_loss_pct, 6
+        )
+        assert body["consecutive_loss_limit"] == settings.max_consecutive_losses
+
+    @pytest.mark.asyncio
+    async def test_returns_market_risk_fields(self, client: httpx.AsyncClient):
+        body = (await client.get("/api/dashboard/risk")).json()
+        assert body["open_positions"] == 2
+        assert body["max_open_positions"] == settings.max_open_positions
+        # pos_001 (10 YES @ 0.55) is the largest single position and market.
+        assert body["largest_position"] == 10.0 * 0.55
+        assert body["largest_position_market"] == "mkt_001"
+        assert body["largest_market_exposure"] == 10.0 * 0.55
+        # Two fresh snapshots, both at spread 0.02.
+        assert body["average_spread"] == 0.02
+        # All seeded markets carry 50000 liquidity.
+        assert body["minimum_liquidity"] == 50000.0
+
+    @pytest.mark.asyncio
+    async def test_market_risk_empty_without_positions(self):
+        db = Database(db_path=":memory:")
+        await db.connect()
+        await db.init_schema()
+        async with await _client(db) as test_client:
+            body = (await test_client.get("/api/dashboard/risk")).json()
+            assert body["open_positions"] == 0
+            assert body["largest_position"] == 0.0
+            assert body["largest_position_market"] is None
+            assert body["largest_market_exposure"] == 0.0
+            assert body["average_spread"] is None
+            assert body["minimum_liquidity"] is None
+            assert body["exposure_pct"] == 0.0
+        await db.close()
 
     @pytest.mark.asyncio
     async def test_reports_loss_streak_from_filled_orders(self):

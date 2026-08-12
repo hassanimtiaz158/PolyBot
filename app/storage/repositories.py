@@ -336,6 +336,17 @@ class SignalRepository(_QueryMixin):
             "SELECT COUNT(*) FROM signals WHERE decision = 'CANDIDATE'"
         )
 
+    _SORT_COLUMNS = frozenset(
+        {
+            "timestamp",
+            "net_edge",
+            "confidence",
+            "gross_edge",
+            "model_probability",
+            "implied_probability",
+        }
+    )
+
     async def list_paginated(
         self,
         limit: int = 50,
@@ -343,11 +354,18 @@ class SignalRepository(_QueryMixin):
         market_id: str | None = None,
         strategy: str | None = None,
         decision: str | None = None,
+        min_edge: float | None = None,
+        min_confidence: float | None = None,
+        sort_by: str | None = None,
+        sort_order: str = "desc",
     ) -> tuple[list[Signal], int]:
         """Return a page of signals and the total number of matches.
 
         Filters combine with AND semantics; each is applied only when
         a non-None value is provided.
+
+        *sort_by* must be a column present in ``_SORT_COLUMNS``; the
+        direction is controlled by *sort_order* (``ASC`` or ``DESC``).
         """
         clauses: list[str] = []
         params: list[object] = []
@@ -360,10 +378,22 @@ class SignalRepository(_QueryMixin):
         if decision:
             clauses.append("decision = ?")
             params.append(decision)
+        if min_edge is not None:
+            clauses.append("net_edge >= ?")
+            params.append(min_edge)
+        if min_confidence is not None:
+            clauses.append("confidence >= ?")
+            params.append(min_confidence)
         where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
+
+        order = "timestamp DESC"
+        if sort_by and sort_by in self._SORT_COLUMNS:
+            direction = "ASC" if str(sort_order).upper() == "ASC" else "DESC"
+            order = f"{sort_by} {direction}"
+
         rows = await self._fetch_rows(
             f"SELECT * FROM signals {where}"
-            "ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+            f"ORDER BY {order} LIMIT ? OFFSET ?",
             (*params, limit, offset),
         )
         total = await self._fetch_count(

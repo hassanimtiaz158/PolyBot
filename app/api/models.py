@@ -198,15 +198,41 @@ class EquityResponse(BaseModel):
 
 
 class DashboardRiskResponse(BaseModel):
-    """Risk utilisation summary for the dashboard Risk page."""
+    """Risk utilisation summary for the dashboard Risk page.
 
+    Bundles every value the dedicated Risk page renders — account,
+    loss-control, market, system, and circuit-breaker state — so the
+    frontend displays only backend-computed numbers and never derives
+    risk controls client-side.
+    """
+
+    # ACCOUNT RISK
+    account_balance: float
+    available_balance: float
+    exposure: float
+    exposure_pct: float
+    exposure_limit: float
+
+    # LOSS CONTROL
+    today_pnl: float
     daily_loss: float
     daily_loss_limit: float
-    exposure: float
-    exposure_limit: float
     consecutive_losses: int
     consecutive_loss_limit: int
+
+    # MARKET RISK
+    open_positions: int
+    max_open_positions: int
+    largest_position: float
+    largest_position_market: str | None = None
+    largest_market_exposure: float
+    average_spread: float | None = None
+    minimum_liquidity: float | None = None
+
+    # SYSTEM RISK (freshness + live health checks)
     spread_status: str
     liquidity_status: str
     data_freshness: str
+
+    # CIRCUIT BREAKER
     circuit_breaker: CircuitBreakerInfo | None = None
