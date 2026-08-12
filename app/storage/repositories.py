@@ -614,16 +614,21 @@ class PositionRepository(_QueryMixin):
         offset: int = 0,
         side: str | None = None,
         open_only: bool = True,
+        market_id: str | None = None,
     ) -> tuple[list[Position], int]:
         """Return a page of positions and the total number of matches.
 
-        ``open_only`` restricts results to positions with ``size > 0``.
+        ``open_only`` restricts results to positions with ``size > 0``;
+        ``market_id`` restricts results to a single market.
         """
         clauses: list[str] = []
         params: list[object] = []
         if side:
             clauses.append("side = ?")
             params.append(side)
+        if market_id:
+            clauses.append("market_id = ?")
+            params.append(market_id)
         if open_only:
             clauses.append("size > 0")
         where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
@@ -733,6 +738,7 @@ class RiskEventRepository(_QueryMixin):
         offset: int = 0,
         event_type: str | None = None,
         severity: str | None = None,
+        market_id: str | None = None,
     ) -> tuple[list[RiskEvent], int]:
         """Return a page of risk events and the total number of matches."""
         clauses: list[str] = []
@@ -743,6 +749,9 @@ class RiskEventRepository(_QueryMixin):
         if severity:
             clauses.append("severity = ?")
             params.append(severity)
+        if market_id:
+            clauses.append("market_id = ?")
+            params.append(market_id)
         where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
         rows = await self._fetch_rows(
             f"SELECT * FROM risk_events {where}"

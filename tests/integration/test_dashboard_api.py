@@ -18,8 +18,14 @@ from app.api.app import create_app
 from app.config.settings import settings
 from app.modes.state import OperatingMode
 from app.storage.db import Database
-from app.storage.models import MarketSnapshot, Order
-from app.storage.repositories import OrderRepository, SnapshotRepository
+from app.storage.models import Market, MarketSnapshot, Order, Position, RiskEvent
+from app.storage.repositories import (
+    MarketRepository,
+    OrderRepository,
+    PositionRepository,
+    RiskEventRepository,
+    SnapshotRepository,
+)
 from tests.integration.test_api import BASE_URL, seed_data
 
 
@@ -303,6 +309,27 @@ class TestDashboardLists:
         assert all(item["size"] > 0 for item in body["items"])
 
     @pytest.mark.asyncio
+    async def test_positions_filter_by_market(self, client: httpx.AsyncClient):
+        resp = await client.get(
+            "/api/dashboard/positions", params={"market_id": "mkt_001"}
+        )
+        body = resp.json()
+        assert body["pagination"]["total"] == 1
+        assert body["items"][0]["position_id"] == "pos_001"
+
+    @pytest.mark.asyncio
+    async def test_positions_include_closed_with_open_only_false(
+        self, client: httpx.AsyncClient
+    ):
+        resp = await client.get(
+            "/api/dashboard/positions",
+            params={"open_only": False, "market_id": "mkt_003"},
+        )
+        body = resp.json()
+        assert body["pagination"]["total"] == 1
+        assert body["items"][0]["position_id"] == "pos_003"
+
+    @pytest.mark.asyncio
     async def test_orders_list_and_status_filter(self, client: httpx.AsyncClient):
         resp = await client.get("/api/dashboard/orders")
         assert resp.json()["pagination"]["total"] == 6
@@ -313,6 +340,40 @@ class TestDashboardLists:
         body = by_status.json()
         assert body["pagination"]["total"] == 3
         assert all(item["status"] == "FILLED" for item in body["items"])
+
+    @pytest.mark.asyncio
+    async def test_orders_filter_by_market(self, client: httpx.AsyncClient):
+        resp = await client.get(
+            "/api/dashboard/orders", params={"market_id": "mkt_002"}
+        )
+        body = resp.json()
+        assert body["pagination"]["total"] == 3
+        assert all(item["market_id"] == "mkt_002" for item in body["items"])
+
+    @pytest.mark.asyncio
+    async def test_audit_filter_by_market(self, client: httpx.AsyncClient):
+        db = Database(db_path=":memory:")
+        await db.connect()
+        await db.init_schema()
+        await seed_data(db)
+        await RiskEventRepository(db).insert(
+            RiskEvent(
+                event_id="evt_003",
+                event_type="RISK_REJECTED",
+                severity="MEDIUM",
+                market_id="mkt_001",
+                timestamp="2026-08-01T08:00:00Z",
+            )
+        )
+        async with await _client(db) as test_client:
+            body = (
+                await test_client.get(
+                    "/api/dashboard/audit", params={"market_id": "mkt_001"}
+                )
+            ).json()
+            assert body["pagination"]["total"] == 1
+            assert body["items"][0]["event_type"] == "RISK_REJECTED"
+        await db.close()
 
     @pytest.mark.asyncio
     async def test_validation_errors(self, client: httpx.AsyncClient):
@@ -326,6 +387,174 @@ class TestDashboardLists:
             resp = await client.get(path, params={"limit": 0})
             assert resp.status_code == 422
             assert resp.json()["detail"] == "validation_error"
+
+
+# ====================================================================
+# /api/dashboard/positions — enrichment
+# ====================================================================
+
+
+class TestPositionsEnrichment:
+    @pytest.mark.asyncio
+    async def test_exposes_display_only_derivations(
+        self, client: httpx.AsyncClient
+    ):
+        body = (await client.get("/api/dashboard/positions")).json()
+        by_id = {item["position_id"]: item for item in body["items"]}
+
+        # pos_001: 10 YES @ 0.50, current 0.55, unrealised 0.50.
+        p = by_id["pos_001"]
+        assert p["exposure"] == 10.0 * 0.55
+        assert p["return_pct"] == 0.5 / (10.0 * 0.50)
+        assert p["time_to_resolution"] == 86400.0  # snapshot fallback
+        assert p["risk_status"] == "NORMAL"
+
+        # pos_002: 5 NO @ 0.50, current 0.55, unrealised 0.25.
+        p = by_id["pos_002"]
+        assert p["exposure"] == 5.0 * 0.55
+        assert p["return_pct"] == 0.25 / (5.0 * 0.50)
+        assert p["risk_status"] == "NORMAL"
+
+    @pytest.mark.asyncio
+    async def test_risk_status_reflects_unrealised_loss(
+        self, client: httpx.AsyncClient
+    ):
+        db = Database(db_path=":memory:")
+        await db.connect()
+        await db.init_schema()
+        await seed_data(db)
+        await PositionRepository(db).upsert(
+            Position(
+                position_id="pos_100",
+                market_id="mkt_001",
+                side="YES",
+                size=10.0,
+                average_entry=0.50,
+                current_price=0.10,
+                realised_pnl=0.0,
+                unrealised_pnl=-4.0,
+            )
+        )
+        async with await _client(db) as test_client:
+            body = (
+                await test_client.get("/api/dashboard/positions")
+            ).json()
+            by_id = {item["position_id"]: item for item in body["items"]}
+            assert by_id["pos_100"]["risk_status"] == "CRITICAL"  # -80% of cost
+        await db.close()
+
+    @pytest.mark.asyncio
+    async def test_time_to_resolution_uses_market_resolution_time(
+        self, client: httpx.AsyncClient
+    ):
+        db = Database(db_path=":memory:")
+        await db.connect()
+        await db.init_schema()
+        await seed_data(db)
+        future = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
+        await MarketRepository(db).upsert(
+            Market(
+                market_id="mkt_001",
+                question="Will event A happen?",
+                status="active",
+                resolution_time=future,
+            )
+        )
+        async with await _client(db) as test_client:
+            body = (
+                await test_client.get(
+                    "/api/dashboard/positions", params={"market_id": "mkt_001"}
+                )
+            ).json()
+            ttr = body["items"][0]["time_to_resolution"]
+            assert 1.5 * 3600 < ttr <= 2.0 * 3600
+        await db.close()
+
+    @pytest.mark.asyncio
+    async def test_return_pct_null_without_entry(self):
+        db = Database(db_path=":memory:")
+        await db.connect()
+        await db.init_schema()
+        await seed_data(db)
+        await PositionRepository(db).upsert(
+            Position(
+                position_id="pos_101",
+                market_id="mkt_001",
+                side="YES",
+                size=10.0,
+                average_entry=0.0,
+                current_price=0.55,
+                realised_pnl=0.0,
+                unrealised_pnl=0.5,
+            )
+        )
+        async with await _client(db) as test_client:
+            body = (
+                await test_client.get("/api/dashboard/positions")
+            ).json()
+            by_id = {item["position_id"]: item for item in body["items"]}
+            assert by_id["pos_101"]["return_pct"] is None
+        await db.close()
+
+
+# ====================================================================
+# /api/dashboard/markets/{market_id}/snapshots
+# ====================================================================
+
+
+class TestMarketSnapshots:
+    @pytest.mark.asyncio
+    async def test_returns_snapshot_rows_for_market(
+        self, client: httpx.AsyncClient
+    ):
+        resp = await client.get("/api/dashboard/markets/mkt_001/snapshots")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["pagination"]["total"] == 1
+        row = body["items"][0]
+        assert row["market_id"] == "mkt_001"
+        assert row["bid"] == 0.49
+        assert row["ask"] == 0.51
+        assert row["midpoint"] == 0.50
+        assert row["spread"] == 0.02
+        assert row["time_to_resolution"] == 86400.0
+
+    @pytest.mark.asyncio
+    async def test_orders_newest_first(self, client: httpx.AsyncClient):
+        db = Database(db_path=":memory:")
+        await db.connect()
+        await db.init_schema()
+        await seed_data(db)
+        repo = SnapshotRepository(db)
+        old = "2026-08-01T10:00:00Z"
+        new = "2026-08-02T10:00:00Z"
+        await repo.insert(
+            MarketSnapshot(
+                market_id="mkt_001", timestamp=old, midpoint=0.40,
+                spread=0.02, time_to_resolution=1000.0,
+            )
+        )
+        await repo.insert(
+            MarketSnapshot(
+                market_id="mkt_001", timestamp=new, midpoint=0.60,
+                spread=0.02, time_to_resolution=2000.0,
+            )
+        )
+        async with await _client(db) as test_client:
+            body = (
+                await test_client.get("/api/dashboard/markets/mkt_001/snapshots")
+            ).json()
+            assert body["pagination"]["total"] == 2
+            assert body["items"][0]["midpoint"] == 0.60  # newest first
+            assert body["items"][1]["midpoint"] == 0.40
+        await db.close()
+
+    @pytest.mark.asyncio
+    async def test_empty_when_no_snapshots(self, client: httpx.AsyncClient):
+        resp = await client.get("/api/dashboard/markets/mkt_003/snapshots")
+        body = resp.json()
+        assert body["pagination"]["total"] == 0
+        assert body["items"] == []
 
 
 # ====================================================================

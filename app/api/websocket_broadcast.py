@@ -34,7 +34,6 @@ from app.api import dashboard_service
 from app.api.models import (
     MarketResponse,
     OrderResponse,
-    PositionResponse,
     SignalResponse,
 )
 from app.config.settings import settings
@@ -199,14 +198,17 @@ class DashboardBroadcaster:
         repo = PositionRepository(db)
         rows = await repo.list_open()
         pnl = await repo.pnl_summary()
+        items, total = await dashboard_service.build_positions(
+            db, limit=100, offset=0, open_only=True
+        )
         token = (
             len(rows),
             round(float(pnl["total_realised_pnl"]), 6),
             round(float(pnl["total_unrealised_pnl"]), 6),
         )
         payload: dict[str, Any] = {
-            "items": [PositionResponse.model_validate(p).model_dump() for p in rows],
-            "total": len(rows),
+            "items": [r.model_dump() for r in items],
+            "total": total,
         }
         return token, POSITION_UPDATE, payload
 

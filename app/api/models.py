@@ -62,6 +62,30 @@ class PositionResponse(_EntityModel):
     realised_pnl: float | None = None
     unrealised_pnl: float | None = None
 
+    # ── Display-only derivations (computed server-side so the client
+    #    never re-derives P&L or sizing). None when the source data is
+    #    unavailable; the dashboard renders "—" for those rows. ──────
+    exposure: float | None = None
+    return_pct: float | None = None
+    time_to_resolution: float | None = None
+    risk_status: str | None = None
+
+
+class MarketSnapshotResponse(_EntityModel):
+    """A single persisted market snapshot (order-book point-in-time)."""
+
+    market_id: str
+    id: int | None = None
+    timestamp: str | None = None
+    bid: float | None = None
+    ask: float | None = None
+    midpoint: float | None = None
+    spread: float | None = None
+    bid_depth: float | None = None
+    ask_depth: float | None = None
+    volume: float | None = None
+    time_to_resolution: float | None = None
+
 
 class OrderResponse(_EntityModel):
     order_id: str

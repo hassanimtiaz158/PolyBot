@@ -135,7 +135,7 @@ function errorCard(label, err, wide) {
  * col = { key, label, align, render(row) -> Node | string }
  * When rows is empty and emptyMessage is set, a message row is shown.
  */
-function renderTable(tableEl, caption, columns, rows, emptyMessage) {
+function renderTable(tableEl, caption, columns, rows, emptyMessage, rowKey) {
   const thead = document.createElement('thead');
   const headRow = document.createElement('tr');
   columns.forEach((col) => {
@@ -151,6 +151,13 @@ function renderTable(tableEl, caption, columns, rows, emptyMessage) {
   if (rows.length) {
     rows.forEach((row) => {
       const tr = document.createElement('tr');
+      if (rowKey) {
+        const key = rowKey(row);
+        if (key != null) {
+          tr.setAttribute('data-row-key', String(key));
+          tr.classList.add('clickable-row');
+        }
+      }
       columns.forEach((col) => {
         const td = document.createElement('td');
         const value = col.render ? col.render(row) : row[col.key];
@@ -379,11 +386,27 @@ function mapPositions(d) {
     id: p.position_id,
     market: p.market_id,
     side: p.side,
+    outcome: p.side === 'NO' ? 'NO' : 'YES',
     size: p.size,
     entry: p.average_entry,
     price: p.current_price,
+    exposure: p.exposure,
     uPnL: p.unrealised_pnl,
     rPnL: p.realised_pnl,
+    returnPct: p.return_pct,
+    timeToResolution: p.time_to_resolution,
+    riskStatus: p.risk_status,
+  }));
+}
+
+function mapSnapshots(d) {
+  return (d.items || []).map((s) => ({
+    timestamp: s.timestamp,
+    midpoint: s.midpoint,
+    bid: s.bid,
+    ask: s.ask,
+    spread: s.spread,
+    timeToResolution: s.time_to_resolution,
   }));
 }
 
@@ -398,6 +421,16 @@ function mapOrders(d) {
     averageFill: o.average_fill,
     status: o.status,
     time: fmtDateTime(o.submitted_at),
+  }));
+}
+
+function mapAudit(d) {
+  return (d.items || []).map((e) => ({
+    id: e.event_id,
+    eventType: e.event_type,
+    severity: e.severity,
+    details: e.details,
+    time: fmtDateTime(e.timestamp),
   }));
 }
 
@@ -453,6 +486,7 @@ async function loadMarkets() {
 async function loadPositions() {
   const d = await fetchJSON('/api/dashboard/positions?limit=50');
   state.groups.positions.data = mapPositions(d);
+  state.groups.positions.total = d.pagination ? d.pagination.total : null;
 }
 
 async function loadOrders() {
@@ -487,13 +521,7 @@ async function loadHealth() {
 
 async function loadAudit() {
   const d = await fetchJSON('/api/dashboard/audit?limit=50');
-  state.groups.audit.data = (d.items || []).map((e) => ({
-    id: e.event_id,
-    eventType: e.event_type,
-    severity: e.severity,
-    details: e.details,
-    time: fmtDateTime(e.timestamp),
-  }));
+  state.groups.audit.data = mapAudit(d);
 }
 
 const LOADERS = {
@@ -690,10 +718,11 @@ function connectWS() {
   };
 }
 
-function applyWSGroup(groupName, mappedData) {
+function applyWSGroup(groupName, mappedData, total) {
   const g = state.groups[groupName];
   if (!g) return;
   g.data = mappedData;
+  if (total != null) g.total = total;
   g.status = 'ok';
   g.error = null;
   g.lastUpdate = Date.now();
@@ -742,11 +771,13 @@ const WS_HANDLERS = {
   },
 
   POSITION_UPDATE(data) {
-    applyWSGroup('positions', mapPositions(data));
+    applyWSGroup('positions', mapPositions(data), data.total);
     renderPositionsTable();
     renderPositionsFullTable();
+    renderPositionsSummary();
     renderOverviewCards();
     updateCharts();
+    refreshPositionDrawer();
     updateDataStatus();
   },
 
@@ -767,6 +798,7 @@ const WS_HANDLERS = {
   'P&L_UPDATE'(data) {
     applyWSGroup('overview', mapOverview(data));
     renderOverviewCards();
+    renderPositionsSummary();
     renderPerformanceCards();
     updateCharts();
     refreshGroup('equity', [updateCharts]);
@@ -776,6 +808,7 @@ const WS_HANDLERS = {
 
   RISK_UPDATE(data) {
     applyWSGroup('risk', mapRisk(data));
+    renderPositionsSummary();
     renderRisk();
     renderRiskPage();
     renderSystem();
@@ -958,6 +991,18 @@ const severityCell = (row) => {
   const level = row.severity === 'HIGH' ? 'ERROR' : row.severity === 'MEDIUM' ? 'WARNING' : 'HEALTHY';
   return statusBadge(level, row.severity || '—');
 };
+const riskStatusCell = (status) => {
+  const level = status === 'CRITICAL' ? 'ERROR' : status === 'WARNING' ? 'WARNING' : 'HEALTHY';
+  return statusBadge(level, status || '—');
+};
+const fmtDuration = (seconds) => {
+  if (seconds == null) return '—';
+  const s = Math.max(0, Math.round(seconds));
+  if (s >= 86400) return `${num(Math.floor(s / 86400))}d ${Math.floor((s % 86400) / 3600)}h`;
+  if (s >= 3600) return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+  if (s >= 60) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${s}s`;
+};
 const checkHealthy = (healthy) => (healthy ? 'HEALTHY' : 'ERROR');
 const ratioLevel = (v, limit) => {
   const ratio = limit > 0 ? v / limit : 0;
@@ -1014,6 +1059,31 @@ const positionColumns = [
   { key: 'price', label: 'Current', align: 'right', render: (r) => (r.price == null ? '—' : r.price.toFixed(3)) },
   { key: 'uPnL', label: 'Unreal. P&L', align: 'right', render: (r) => (r.uPnL == null ? '—' : signedMoney(r.uPnL)) },
   { key: 'rPnL', label: 'Realised P&L', align: 'right', render: (r) => (r.rPnL == null ? '—' : signedMoney(r.rPnL)) },
+];
+
+const positionsFullColumns = [
+  { key: 'market', label: 'Market', render: (r) => shortMarket(marketQuestion(r.market)) },
+  {
+    key: 'outcome',
+    label: 'Outcome',
+    align: 'center',
+    render: (r) => statusBadge(r.outcome === 'NO' ? 'ERROR' : 'HEALTHY', r.outcome),
+  },
+  { key: 'side', label: 'Side', align: 'center', render: (r) => (r.side === 'NO' ? 'SHORT' : 'LONG') },
+  { key: 'entry', label: 'Entry Price', align: 'right', render: (r) => (r.entry == null ? '—' : r.entry.toFixed(3)) },
+  { key: 'price', label: 'Current Price', align: 'right', render: (r) => (r.price == null ? '—' : r.price.toFixed(3)) },
+  { key: 'size', label: 'Position Size', align: 'right', render: (r) => optNum(r.size) },
+  { key: 'exposure', label: 'Exposure', align: 'right', render: (r) => (r.exposure == null ? '—' : money(r.exposure)) },
+  { key: 'uPnL', label: 'Unrealized P&L', align: 'right', render: (r) => (r.uPnL == null ? '—' : signedMoney(r.uPnL)) },
+  { key: 'rPnL', label: 'Realized P&L', align: 'right', render: (r) => (r.rPnL == null ? '—' : signedMoney(r.rPnL)) },
+  {
+    key: 'returnPct',
+    label: 'Return %',
+    align: 'right',
+    render: (r) => (r.returnPct == null ? '—' : pct1(r.returnPct * 100)),
+  },
+  { key: 'timeToResolution', label: 'Time To Resolution', align: 'right', render: (r) => fmtDuration(r.timeToResolution) },
+  { key: 'riskStatus', label: 'Risk Status', align: 'center', render: (r) => riskStatusCell(r.riskStatus) },
 ];
 
 const orderColumns = [
@@ -1246,7 +1316,36 @@ function renderPositionsFullTable() {
   const table = $('#positions-full-table');
   if (g.status === 'error') return renderTableMessage(table, 'Unable to load live data', 'error');
   if (g.status === 'loading' || g.status === 'idle') return renderTableMessage(table, 'Loading live data…');
-  renderTable(table, 'All positions', positionColumns, g.data, 'No positions yet');
+  renderTable(table, 'All positions', positionsFullColumns, g.data, 'No positions yet', (r) => r.id);
+}
+
+function renderPositionsSummary() {
+  const g = state.groups.positions;
+  const risk = state.groups.risk;
+  const ov = state.groups.overview;
+  const container = $('#positions-summary-cards');
+  if (!container) return;
+  if (g.status === 'error' && risk.status === 'error') {
+    container.replaceChildren(errorCard('Portfolio Summary', g.error, true));
+    return;
+  }
+  const count = g.status === 'ok' ? (g.total != null ? g.total : (g.data ? g.data.length : null)) : null;
+  const r = risk.status === 'ok' ? risk.data : null;
+  const o = ov.status === 'ok' ? ov.data : null;
+  const largestMarket = r ? r.largestPositionMarket : null;
+  const cards = [
+    metricCard({
+      label: 'Total Exposure',
+      value: r && r.exposure != null ? moneyInt(r.exposure) : '—',
+      sub: r ? 'notional (size × price)' : null,
+    }),
+    metricCard({ label: 'Number of Positions', value: count == null ? '—' : num(count), sub: 'open positions' }),
+    metricCard({ label: 'Largest Position', value: r ? money(r.largestPosition) : '—', sub: largestMarket ? shortMarket(marketQuestion(largestMarket)) : null }),
+    metricCard({ label: 'Largest Market', value: largestMarket ? shortMarket(marketQuestion(largestMarket)) : '—', sub: largestMarket ? largestMarket : null }),
+    metricCard({ label: 'Portfolio P&L', value: o ? signedMoney(o.totalPnl) : '—', tone: o ? pnlTone(o.totalPnl) : 'default', sub: 'realised + unrealised (backend)' }),
+    metricCard({ label: 'Portfolio Drawdown', value: o ? `-${pct1(o.maxDrawdown * 100)}` : '—', tone: o && o.maxDrawdown > 0.08 ? 'neg' : 'default', sub: 'peak to trough' }),
+  ];
+  container.replaceChildren(...cards);
 }
 
 function renderOrdersTable() {
@@ -1676,6 +1775,7 @@ function renderAll() {
   renderMarketsTable();
   renderPositionsTable();
   renderPositionsFullTable();
+  renderPositionsSummary();
   renderOrdersTable();
   renderOrdersFullTable();
   renderAuditTable();
@@ -1687,6 +1787,243 @@ function renderAll() {
   updateCharts();
   updateDataStatus();
   renderFooter();
+}
+
+/* ================================================================
+   Position detail drawer
+   ================================================================ */
+
+const positionDrawer = {
+  open: false,
+  positionId: null,
+  marketId: null,
+  chart: null,
+};
+
+function initPositionDrawer() {
+  const closeBtn = $('#position-drawer-close');
+  const backdrop = $('#position-drawer-backdrop');
+  if (closeBtn) closeBtn.addEventListener('click', closePositionDrawer);
+  if (backdrop) {
+    backdrop.addEventListener('click', (event) => {
+      if (event.target === backdrop) closePositionDrawer();
+    });
+  }
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closePositionDrawer();
+  });
+  const table = $('#positions-full-table');
+  if (table) {
+    table.addEventListener('click', (event) => {
+      const row = event.target && event.target.closest ? event.target.closest('tr[data-row-key]') : null;
+      if (!row) return;
+      const id = row.dataset.rowKey;
+      const pos = (state.groups.positions.data || []).find((p) => String(p.id) === String(id));
+      if (pos) openPositionDrawer(pos);
+    });
+  }
+}
+
+function openPositionDrawer(pos) {
+  positionDrawer.open = true;
+  positionDrawer.positionId = pos ? pos.id : null;
+  positionDrawer.marketId = pos ? pos.market : null;
+  $('#position-drawer-backdrop').hidden = false;
+  document.body.style.overflow = 'hidden';
+
+  renderPositionDrawerHeader(pos);
+  renderPositionDrawerSummary(pos);
+  $('#position-price-chart').replaceChildren(el('p', 'drawer-empty', 'Loading price history…'));
+  const tables = ['#position-history-table', '#position-signals-table', '#position-orders-table', '#position-risk-table'];
+  tables.forEach((sel) => renderTableMessage($(sel), 'Loading detail…'));
+  loadPositionDrawerDetails();
+}
+
+function closePositionDrawer() {
+  if (!positionDrawer.open) return;
+  positionDrawer.open = false;
+  $('#position-drawer-backdrop').hidden = true;
+  document.body.style.overflow = '';
+  if (positionDrawer.chart) {
+    positionDrawer.chart.destroy();
+    positionDrawer.chart = null;
+  }
+}
+
+function refreshPositionDrawer() {
+  if (!positionDrawer.open) return;
+  const pos = (state.groups.positions.data || []).find(
+    (p) => String(p.id) === String(positionDrawer.positionId),
+  );
+  renderPositionDrawerSummary(pos);
+  loadPositionDrawerDetails();
+}
+
+async function loadPositionDrawerDetails() {
+  const marketId = positionDrawer.marketId;
+  if (!marketId) return;
+  const q = encodeURIComponent(marketId);
+  const urls = {
+    snapshots: `/api/dashboard/markets/${q}/snapshots?limit=120`,
+    history: `/api/dashboard/positions?open_only=false&market_id=${q}&limit=50`,
+    signals: `/api/dashboard/signals?market_id=${q}&limit=50`,
+    orders: `/api/dashboard/orders?market_id=${q}&limit=50`,
+    risk: `/api/dashboard/audit?market_id=${q}&limit=50`,
+  };
+  const entries = await Promise.allSettled(
+    Object.entries(urls).map(async ([key, path]) => [key, await fetchJSON(path)]),
+  );
+  const results = {};
+  entries.forEach((entry) => {
+    if (entry.status === 'fulfilled') results[entry.value[0]] = entry.value[1];
+    else results[entry.reason && entry.reason.code] = null;
+  });
+  renderPositionPriceChart(results.snapshots ? mapSnapshots(results.snapshots) : null);
+  renderPositionHistoryTable(results.history ? mapPositions(results.history) : null);
+  renderPositionSignalsTable(results.signals ? mapSignals(results.signals) : null);
+  renderPositionOrdersTable(results.orders ? mapOrders(results.orders) : null);
+  renderPositionRiskTable(results.audit ? mapAudit(results.audit) : null);
+}
+
+function renderPositionDrawerHeader(pos) {
+  const kicker = $('#position-drawer-kicker');
+  const title = $('#position-drawer-title');
+  if (!pos) {
+    kicker.textContent = positionDrawer.marketId || '—';
+    title.textContent = 'Position';
+    return;
+  }
+  kicker.textContent = `${pos.market} · ${pos.id}`;
+  title.textContent = marketQuestion(pos.market);
+}
+
+function renderPositionDrawerSummary(pos) {
+  const container = $('#position-drawer-summary');
+  if (!pos) {
+    container.replaceChildren(el('p', 'drawer-empty', 'No live data for this position.'));
+    return;
+  }
+  const cells = [
+    ['Side', pos.side === 'NO' ? 'SHORT (NO)' : 'LONG (YES)'],
+    ['Position Size', optNum(pos.size)],
+    ['Entry Price', pos.entry == null ? '—' : pos.entry.toFixed(3)],
+    ['Current Price', pos.price == null ? '—' : pos.price.toFixed(3)],
+    ['Exposure', pos.exposure == null ? '—' : money(pos.exposure)],
+    ['Unrealized P&L', pos.uPnL == null ? '—' : signedMoney(pos.uPnL)],
+    ['Realized P&L', pos.rPnL == null ? '—' : signedMoney(pos.rPnL)],
+    ['Return %', pos.returnPct == null ? '—' : pct1(pos.returnPct * 100)],
+    ['Time To Resolution', fmtDuration(pos.timeToResolution)],
+  ];
+  const dl = el('dl', 'drawer-facts');
+  cells.forEach(([label, value]) => {
+    const item = el('div', 'drawer-fact');
+    item.append(el('dt', 'drawer-fact-label', label), el('dd', 'drawer-fact-value', value));
+    dl.appendChild(item);
+  });
+  const statusWrap = el('div', 'drawer-fact');
+  const statusValue = el('dd', 'drawer-fact-value');
+  statusValue.appendChild(riskStatusCell(pos.riskStatus));
+  statusWrap.append(el('dt', 'drawer-fact-label', 'Risk Status'), statusValue);
+  dl.appendChild(statusWrap);
+  container.replaceChildren(dl);
+}
+
+function renderPositionPriceChart(snapshots) {
+  const wrap = $('#position-price-chart');
+  if (positionDrawer.chart) {
+    positionDrawer.chart.destroy();
+    positionDrawer.chart = null;
+  }
+  if (!snapshots || !snapshots.length) {
+    wrap.replaceChildren(el('p', 'drawer-empty', 'No price history available.'));
+    return;
+  }
+  if (typeof Chart === 'undefined') {
+    wrap.replaceChildren(el('p', 'drawer-empty', 'Chart.js could not be loaded.'));
+    return;
+  }
+  const canvas = document.createElement('canvas');
+  wrap.replaceChildren(canvas);
+  const bodyStyle = getComputedStyle(document.body);
+  const faint = bodyStyle.getPropertyValue('--text-faint').trim();
+  const gridColor = 'rgba(148,163,184,0.08)';
+  positionDrawer.chart = new Chart(canvas.getContext('2d'), {
+    type: 'line',
+    data: {
+      labels: snapshots.map((s) => fmtDateTime(s.timestamp)),
+      datasets: [
+        {
+          label: 'Midpoint',
+          data: snapshots.map((s) => s.midpoint),
+          borderColor: '#00c8ff',
+          backgroundColor: 'rgba(0,200,255,0.12)',
+          fill: true,
+          tension: 0.35,
+          borderWidth: 2,
+          pointRadius: 0,
+          pointHitRadius: 10,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 350 },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#121b2a',
+          borderColor: '#2a3a52',
+          borderWidth: 1,
+          padding: 10,
+          titleColor: '#dbe4f0',
+          bodyColor: '#94a3b8',
+          callbacks: {
+            label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(3)}`,
+          },
+        },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { maxTicksLimit: 8, color: faint } },
+        y: { grid: { color: gridColor }, ticks: { color: faint } },
+      },
+    },
+  });
+}
+
+const positionHistoryColumns = [
+  { key: 'market', label: 'Market', render: (r) => shortMarket(marketQuestion(r.market)) },
+  { key: 'side', label: 'Side', align: 'center', render: (r) => (r.side === 'NO' ? 'SHORT' : 'LONG') },
+  { key: 'size', label: 'Size', align: 'right', render: (r) => optNum(r.size) },
+  { key: 'entry', label: 'Entry', align: 'right', render: (r) => (r.entry == null ? '—' : r.entry.toFixed(3)) },
+  { key: 'price', label: 'Current', align: 'right', render: (r) => (r.price == null ? '—' : r.price.toFixed(3)) },
+  { key: 'uPnL', label: 'Unrealized P&L', align: 'right', render: (r) => (r.uPnL == null ? '—' : signedMoney(r.uPnL)) },
+  { key: 'rPnL', label: 'Realized P&L', align: 'right', render: (r) => (r.rPnL == null ? '—' : signedMoney(r.rPnL)) },
+  { key: 'riskStatus', label: 'Risk Status', align: 'center', render: (r) => riskStatusCell(r.riskStatus) },
+];
+
+function renderPositionHistoryTable(rows) {
+  const table = $('#position-history-table');
+  if (rows == null) return renderTableMessage(table, 'Unable to load live data', 'error');
+  renderTable(table, 'Position history', positionHistoryColumns, rows, 'No position history for this market.');
+}
+
+function renderPositionSignalsTable(rows) {
+  const table = $('#position-signals-table');
+  if (rows == null) return renderTableMessage(table, 'Unable to load live data', 'error');
+  renderTable(table, 'Related signals', overviewSignalColumns, rows, 'No signals for this market.');
+}
+
+function renderPositionOrdersTable(rows) {
+  const table = $('#position-orders-table');
+  if (rows == null) return renderTableMessage(table, 'Unable to load live data', 'error');
+  renderTable(table, 'Order history', orderColumns, rows, 'No orders for this market.');
+}
+
+function renderPositionRiskTable(rows) {
+  const table = $('#position-risk-table');
+  if (rows == null) return renderTableMessage(table, 'Unable to load live data', 'error');
+  renderTable(table, 'Risk decisions', auditColumns, rows, 'No risk events for this market.');
 }
 
 /* ================================================================
@@ -1910,6 +2247,7 @@ function init() {
   initNav();
   initKillSwitch();
   initSignalsFilters();
+  initPositionDrawer();
   startScheduler();
   connectWS();
 }

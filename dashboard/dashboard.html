@@ -159,6 +159,9 @@
     <!-- ======================= Positions ======================= -->
     <section class="view" id="view-positions" aria-labelledby="h-positions">
       <h1 id="h-positions" class="view-title">Positions</h1>
+
+      <div class="cards" id="positions-summary-cards" aria-label="Portfolio summary"></div>
+
       <article class="panel">
         <div class="table-scroll"><table id="positions-full-table"></table></div>
       </article>
@@ -238,6 +241,52 @@
       </article>
     </section>
   </main>
+
+  <!-- ======================= Position detail drawer ======================= -->
+  <div class="drawer-backdrop" id="position-drawer-backdrop" hidden>
+    <div class="drawer" id="position-drawer" role="dialog" aria-modal="true" aria-labelledby="position-drawer-title">
+      <header class="drawer-head">
+        <div>
+          <div class="drawer-kicker" id="position-drawer-kicker"></div>
+          <h2 id="position-drawer-title" class="drawer-title"></h2>
+        </div>
+        <button class="drawer-close" id="position-drawer-close" type="button" aria-label="Close position details">&times;</button>
+      </header>
+
+      <div class="drawer-summary" id="position-drawer-summary"></div>
+
+      <div class="drawer-sections">
+        <section class="drawer-section" aria-labelledby="h-drawer-price">
+          <h3 id="h-drawer-price">Price History</h3>
+          <div class="drawer-chart" id="position-price-chart">
+            <p class="drawer-empty">No price history available.</p>
+          </div>
+        </section>
+
+        <section class="drawer-section" aria-labelledby="h-drawer-poshist">
+          <h3 id="h-drawer-poshist">Position History</h3>
+          <div class="table-scroll"><table id="position-history-table"></table></div>
+        </section>
+
+        <div class="drawer-two-col">
+          <section class="drawer-section" aria-labelledby="h-drawer-signals">
+            <h3 id="h-drawer-signals">Related Signals</h3>
+            <div class="table-scroll"><table id="position-signals-table"></table></div>
+          </section>
+
+          <section class="drawer-section" aria-labelledby="h-drawer-orders">
+            <h3 id="h-drawer-orders">Order History</h3>
+            <div class="table-scroll"><table id="position-orders-table"></table></div>
+          </section>
+        </div>
+
+        <section class="drawer-section" aria-labelledby="h-drawer-risk">
+          <h3 id="h-drawer-risk">Risk Decisions</h3>
+          <div class="table-scroll"><table id="position-risk-table"></table></div>
+        </section>
+      </div>
+    </div>
+  </div>
 
   <footer class="footbar">
     <span id="last-updated" aria-live="off"></span>

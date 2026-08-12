@@ -29,13 +29,14 @@ from app.api.models import (
     EquityPoint,
     HealthCheckDetail,
     HealthResponse,
+    PositionResponse,
 )
 from app.config.settings import settings
 from app.modes.state import OperatingMode
 from app.monitoring.health import checks as health_checks
 from app.monitoring.health import health_status
 from app.storage.db import Database
-from app.storage.models import Order
+from app.storage.models import Market, Order, Position
 from app.storage.repositories import (
     MarketRepository,
     OrderRepository,
@@ -247,6 +248,116 @@ async def data_freshness_status(db: Database) -> str:
     if age <= settings.data_max_age_seconds:
         return "FRESH"
     return "STALE"
+
+
+# ── Position detail derivations (display only) ──────────────────────
+
+
+def _position_risk_status(position: Position) -> str:
+    """Classify a position's risk from its unrealised loss relative to
+    the entry cost basis.
+
+    ``NORMAL`` / ``WARNING`` / ``CRITICAL`` thresholds are display
+    conventions only — they never gate or modify trading.
+    """
+    cost = float(position.size or 0.0) * float(position.average_entry or 0.0)
+    unrealised = position.unrealised_pnl
+    if unrealised is None or cost <= 0:
+        return "NORMAL"
+    loss_ratio = -float(unrealised) / cost
+    if loss_ratio >= 0.5:
+        return "CRITICAL"
+    if loss_ratio >= 0.1:
+        return "WARNING"
+    return "NORMAL"
+
+
+def _enrich_position(
+    position: Position,
+    market: Market | None,
+    time_to_resolution: float | None,
+) -> PositionResponse:
+    """Project a persisted position into the enriched dashboard shape.
+
+    Every derived number is computed here — the dashboard displays them
+    verbatim and never re-derives P&L or sizing client-side.
+    """
+    size = float(position.size or 0.0)
+    entry = float(position.average_entry or 0.0)
+    price = float(position.current_price or 0.0)
+
+    exposure = round(size * price, 6) if price > 0 else 0.0
+
+    return_pct: float | None = None
+    cost_basis = size * entry
+    if cost_basis > 0 and position.unrealised_pnl is not None:
+        return_pct = round(float(position.unrealised_pnl) / cost_basis, 6)
+
+    return PositionResponse(
+        position_id=position.position_id,
+        market_id=position.market_id,
+        side=position.side,
+        size=position.size,
+        average_entry=position.average_entry,
+        current_price=position.current_price,
+        realised_pnl=position.realised_pnl,
+        unrealised_pnl=position.unrealised_pnl,
+        exposure=exposure,
+        return_pct=return_pct,
+        time_to_resolution=time_to_resolution,
+        risk_status=_position_risk_status(position),
+    )
+
+
+async def _time_to_resolution_for(
+    db: Database, market: Market | None, market_id: str
+) -> float | None:
+    """Remaining seconds until the market resolves.
+
+    Prefers the market's persisted ``resolution_time``; falls back to
+    the latest snapshot's ``time_to_resolution`` when the market has no
+    resolution timestamp.
+    """
+    if market is not None and market.resolution_time:
+        resolved_at = _parse_ts(market.resolution_time)
+        if resolved_at is not None:
+            seconds = (resolved_at - datetime.now(UTC)).total_seconds()
+            return round(seconds, 6)
+    rows = await SnapshotRepository(db).list_by_market(market_id, limit=1)
+    if rows and rows[0].time_to_resolution is not None:
+        return round(float(rows[0].time_to_resolution), 6)
+    return None
+
+
+async def build_positions(
+    db: Database,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+    open_only: bool = True,
+    market_id: str | None = None,
+) -> tuple[list[PositionResponse], int]:
+    """Return an enriched, paginated page of positions.
+
+    ``market_id`` restricts to a single market (used by the position
+    detail view to show full position history for one market).
+    """
+    repo = PositionRepository(db)
+    items, total = await repo.list_paginated(
+        limit=limit, offset=offset, open_only=open_only, market_id=market_id
+    )
+    if not items:
+        return [], total
+
+    markets = {
+        m.market_id: m for m in await MarketRepository(db).list_all()
+    }
+    responses: list[PositionResponse] = []
+    for position in items:
+        market = markets.get(position.market_id)
+        ttr = await _time_to_resolution_for(db, market, position.market_id)
+        responses.append(_enrich_position(position, market, ttr))
+    return responses, total
 
 
 async def build_overview(db: Database) -> DashboardOverviewResponse:

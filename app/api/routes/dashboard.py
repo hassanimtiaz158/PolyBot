@@ -21,6 +21,7 @@ from app.api.models import (
     EquityResponse,
     HealthResponse,
     MarketResponse,
+    MarketSnapshotResponse,
     OrderResponse,
     PaginatedResponse,
     PaginationMeta,
@@ -36,6 +37,7 @@ from app.storage.repositories import (
     PositionRepository,
     RiskEventRepository,
     SignalRepository,
+    SnapshotRepository,
 )
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -161,19 +163,48 @@ async def get_dashboard_positions(
     limit: int = Query(50, ge=1, le=100, description="Page size"),
     offset: int = Query(0, ge=0, description="Number of rows to skip"),
     open_only: bool = Query(True, description="Only return open positions"),
+    market_id: str | None = Query(
+        None, min_length=1, max_length=128, description="Filter by market ID"
+    ),
 ) -> PaginatedResponse[PositionResponse]:
-    """Return a paginated list of positions for the dashboard."""
-    repo = PositionRepository(db)
-    items, total = await repo.list_paginated(
-        limit=limit, offset=offset, open_only=open_only
+    """Return a paginated, enriched list of positions for the dashboard."""
+    items, total = await dashboard_service.build_positions(
+        db, limit=limit, offset=offset, open_only=open_only, market_id=market_id
     )
     return PaginatedResponse(
-        items=[PositionResponse.model_validate(p) for p in items],
+        items=items,
         pagination=PaginationMeta(
             total=total,
             limit=limit,
             offset=offset,
             has_more=offset + len(items) < total,
+        ),
+    )
+
+
+@router.get(
+    "/markets/{market_id}/snapshots",
+    response_model=PaginatedResponse[MarketSnapshotResponse],
+    summary="Dashboard market price history",
+)
+async def get_dashboard_market_snapshots(
+    market_id: str,
+    db: Database = Depends(get_db),
+    limit: int = Query(100, ge=1, le=500, description="Page size"),
+    offset: int = Query(0, ge=0, description="Number of rows to skip"),
+) -> PaginatedResponse[MarketSnapshotResponse]:
+    """Return recent market_snapshots rows (price history for a market)."""
+    rows = await SnapshotRepository(db).list_by_market(
+        market_id, limit=limit, offset=offset
+    )
+    total = await SnapshotRepository(db).count_by_market(market_id)
+    return PaginatedResponse(
+        items=[MarketSnapshotResponse.model_validate(s) for s in rows],
+        pagination=PaginationMeta(
+            total=total,
+            limit=limit,
+            offset=offset,
+            has_more=offset + len(rows) < total,
         ),
     )
 
@@ -190,11 +221,14 @@ async def get_dashboard_orders(
     status: str | None = Query(
         None, min_length=1, max_length=32, description="Filter by order status"
     ),
+    market_id: str | None = Query(
+        None, min_length=1, max_length=128, description="Filter by market ID"
+    ),
 ) -> PaginatedResponse[OrderResponse]:
     """Return a paginated list of orders for the dashboard."""
     repo = OrderRepository(db)
     items, total = await repo.list_paginated(
-        limit=limit, offset=offset, status=status or None
+        limit=limit, offset=offset, status=status or None, market_id=market_id or None
     )
     return PaginatedResponse(
         items=[OrderResponse.model_validate(o) for o in items],
@@ -268,11 +302,14 @@ async def get_dashboard_audit(
     severity: str | None = Query(
         None, min_length=1, max_length=16, description="Filter by severity"
     ),
+    market_id: str | None = Query(
+        None, min_length=1, max_length=128, description="Filter by market ID"
+    ),
 ) -> PaginatedResponse[RiskEventResponse]:
     """Return a paginated audit trail for the dashboard."""
     repo = RiskEventRepository(db)
     items, total = await repo.list_paginated(
-        limit=limit, offset=offset, severity=severity or None
+        limit=limit, offset=offset, severity=severity or None, market_id=market_id or None
     )
     return PaginatedResponse(
         items=[RiskEventResponse.model_validate(r) for r in items],
