@@ -10,7 +10,11 @@ from importlib.metadata import PackageNotFoundError, version
 from fastapi import APIRouter, Depends, Request
 
 from app.api.dependencies import get_db
-from app.api.models import CircuitBreakerInfo, SystemStatusResponse
+from app.api.models import (
+    CircuitBreakerInfo,
+    KillSwitchInfo,
+    SystemStatusResponse,
+)
 from app.config.settings import settings
 from app.modes.state import ModeState, OperatingMode
 from app.storage.db import Database
@@ -20,6 +24,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["system"])
 
 _BREAKER_STATE_KEY = "circuit_breaker"
+_KILL_SWITCH_KEY = "kill_switch"
 
 
 def _package_version() -> str:
@@ -47,6 +52,7 @@ async def get_system_status(
     db_ok = await db.health()
     schema_version = 0
     breaker: CircuitBreakerInfo | None = None
+    kill_switch: KillSwitchInfo | None = None
     if db_ok:
         try:
             cursor = await db.conn.execute(
@@ -66,6 +72,19 @@ async def get_system_status(
                     reasons=data.get("reasons", []),
                     triggered_at=data.get("triggered_at"),
                 )
+            cursor = await db.conn.execute(
+                "SELECT value FROM circuit_breaker_state WHERE key = ?",
+                (_KILL_SWITCH_KEY,),
+            )
+            row = await cursor.fetchone()
+            if row:
+                data = json.loads(row["value"])
+                kill_switch = KillSwitchInfo(
+                    state=data.get("state", "ACTIVE"),
+                    reason=data.get("reason"),
+                    killed_at=data.get("killed_at"),
+                    killed_by=data.get("killed_by"),
+                )
         except Exception:
             logger.warning(
                 "system_status: failed to read database state", exc_info=True
@@ -82,6 +101,7 @@ async def get_system_status(
         database_connected=db_ok,
         schema_version=schema_version,
         circuit_breaker=breaker,
+        kill_switch=kill_switch,
         version=_package_version(),
         uptime_seconds=max(uptime, 0.0),
         started_at=started_at.isoformat() if started_at else None,

@@ -24,6 +24,7 @@ from app.portfolio.tracker import PortfolioTracker
 from app.reconciliation.reconciler import Reconciler
 from app.risk.circuit_breaker import CircuitBreaker
 from app.risk.engine import RiskEngine
+from app.risk.kill_switch import KillSwitch
 from app.risk.limits import RiskLimits
 from app.risk.position_sizing import PositionSizer
 from app.storage.db import db
@@ -78,6 +79,12 @@ class Application:
         # Wire event bus into circuit breaker for CIRCUIT_BREAKER events
         circuit_breaker.set_event_bus(self._event_bus)
 
+        # ── Emergency kill switch ────────────────────────────────
+        # Persisted to SQLite; loading KILLED keeps trading stopped
+        # across restarts until an operator explicitly resumes.
+        kill_switch = KillSwitch(db=db, event_bus=self._event_bus)
+        await kill_switch.load_state()
+
         risk_engine = RiskEngine(
             portfolio=portfolio,
             limits=risk_limits,
@@ -90,7 +97,11 @@ class Application:
             latency_ms=200.0,
             fee_rate=0.05,
         )
-        exec_engine = ExecutionEngine(adapter=paper_adapter)
+        exec_engine = ExecutionEngine(
+            adapter=paper_adapter,
+            kill_switch=kill_switch,
+            event_bus=self._event_bus,
+        )
 
         # ── Repositories ─────────────────────────────────────────────
         signal_repo = SignalRepository()
@@ -124,6 +135,7 @@ class Application:
             router=router,
             breaker=circuit_breaker,
             mode=self.mode_mode,
+            kill_switch=kill_switch,
             get_equity=lambda: portfolio.equity,
             data_provider=None,
             event_bus=self._event_bus,

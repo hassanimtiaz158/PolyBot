@@ -29,6 +29,7 @@ from app.execution.interface import ExecutionAdapter
 from app.execution.state_machine import OrderState, OrderStateMachine
 from app.monitoring.health import checks as health_checks
 from app.risk.engine import RiskDecision
+from app.risk.kill_switch import KILL_SWITCH_REASON, KillSwitch
 
 logger = logging.getLogger(__name__)
 
@@ -114,10 +115,23 @@ class ExecutionEngine:
     ----------
     adapter : ExecutionAdapter
         The underlying execution adapter (paper or live).
+    kill_switch : KillSwitch | None
+        Backend-controlled emergency kill switch.  When provided, every
+        order is gated on it: a KILLED switch blocks submission with a
+        REJECTED result before the adapter is ever called.
+    event_bus : EventBus | None
+        Structured audit bus.  Uses the module-level ``default_bus`` when
+        ``None``.
     """
 
-    def __init__(self, adapter: ExecutionAdapter, event_bus: EventBus | None = None) -> None:
+    def __init__(
+        self,
+        adapter: ExecutionAdapter,
+        kill_switch: KillSwitch | None = None,
+        event_bus: EventBus | None = None,
+    ) -> None:
         self._adapter = adapter
+        self._kill_switch = kill_switch
         self._exec_health = health_checks.get("execution")
         self._bus = event_bus or default_bus
 
@@ -152,6 +166,19 @@ class ExecutionEngine:
                 status="REJECTED",
                 requested_size=0.0,
                 error="Decision has zero size",
+            )
+
+        # Emergency kill switch gate — blocks NEW orders while KILLED.
+        # Checked before the state machine is built or any adapter is
+        # touched, so a KILLED switch can never reach an adapter.
+        if self._kill_switch is not None and await self._kill_switch.is_killed():
+            return OrderResult(
+                order_id="",
+                market_id=decision.market_id,
+                side=decision.side,
+                status="REJECTED",
+                requested_size=0.0,
+                error=f"Kill switch active: {KILL_SWITCH_REASON}",
             )
 
         # Build the order request

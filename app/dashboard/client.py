@@ -582,6 +582,12 @@ class DemoProvider:
                 "reasons": [],
                 "triggered_at": None,
             },
+            "kill_switch": {
+                "state": "ACTIVE",
+                "reason": None,
+                "killed_at": None,
+                "killed_by": None,
+            },
             "version": "0.1.0",
             "uptime_seconds": 42.0,
             "started_at": self._ts(0.0005),

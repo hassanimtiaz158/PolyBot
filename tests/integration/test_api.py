@@ -530,8 +530,10 @@ class TestErrorHandling:
             resp = await client.request(method, "/orders")
             assert resp.status_code in (404, 405)
         openapi = (await client.get("/openapi.json")).json()
-        assert all(
-            method == "get"
-            for path in openapi["paths"]
-            for method in openapi["paths"][path]
-        )
+        for path, methods in openapi["paths"].items():
+            # The only writable surface is the keyed /api/control/*
+            # emergency kill switch (requires POLY_CONTROL_KEY).
+            if path.startswith("/api/control"):
+                assert methods.keys() == {"post"}, path
+            else:
+                assert all(method == "get" for method in methods), path

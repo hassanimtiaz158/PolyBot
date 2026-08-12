@@ -1,4 +1,4 @@
-﻿"""Live Polymarket CLOB V2 execution adapter -- HARD-LOCKED by default.
+"""Live Polymarket CLOB V2 execution adapter -- HARD-LOCKED by default.
 
 Safety model
 ------------
@@ -47,6 +47,7 @@ from app.execution.interface import ExecutionAdapter
 from app.monitoring.health import health_status
 from app.portfolio.tracker import PortfolioTracker
 from app.risk.circuit_breaker import CircuitBreaker
+from app.risk.kill_switch import KILL_SWITCH_REASON, KillSwitch
 from app.storage.repositories import OrderRepository
 
 logger = logging.getLogger(__name__)
@@ -278,13 +279,14 @@ class PolymarketExecution(ExecutionAdapter):
     7. Data freshness and API health checks pass.
     8. Position limits pass immediately before submission.
     9. No duplicate order_id.
-    """
+"""
 
     def __init__(
         self,
         portfolio: PortfolioTracker | None = None,
         order_repo: OrderRepository | None = None,
         breaker: CircuitBreaker | None = None,
+        kill_switch: KillSwitch | None = None,
         credentials: ClobCredentials | None = None,
         base_url: str = CLOB_BASE_URL,
         timeout: float = DEFAULT_TIMEOUT,
@@ -292,6 +294,7 @@ class PolymarketExecution(ExecutionAdapter):
         self._portfolio = portfolio
         self._order_repo = order_repo
         self._breaker = breaker
+        self._kill_switch = kill_switch
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._credentials = credentials or self._load_credentials()
@@ -405,6 +408,12 @@ class PolymarketExecution(ExecutionAdapter):
             return self._build_rejected(order_id, market_id, side, size, "Missing token_id")
 
         # -- Safety gates ------------------------------------------------
+        if self._kill_switch is not None and await self._kill_switch.is_killed():
+            return self._build_rejected(
+                order_id, market_id, side, size,
+                f"Kill switch active: {KILL_SWITCH_REASON}",
+            )
+
         try:
             self._run_all_safety_checks(order_id, market_id, size, price)
         except SafetyViolation as exc:

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Generic, TypeVar
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 T = TypeVar("T")
 
@@ -149,6 +149,33 @@ class CircuitBreakerInfo(BaseModel):
     triggered_at: str | None = None
 
 
+class KillSwitchInfo(BaseModel):
+    """Emergency kill switch state exposed to read-only consumers."""
+
+    state: str
+    reason: str | None = None
+    killed_at: str | None = None
+    killed_by: str | None = None
+
+
+class KillSwitchResponse(KillSwitchInfo):
+    """Result of a kill switch control command."""
+
+    trading_enabled: bool
+
+
+class KillSwitchControlRequest(BaseModel):
+    """Body for the writable control endpoints.
+
+    ``confirm`` is only meaningful for ``/resume`` and must be ``True``
+    for the resume to proceed.  ``operator`` identifies the actor and is
+    recorded on the audit event (never echoed back into any response).
+    """
+
+    confirm: bool = False
+    operator: str | None = Field(default=None, max_length=64)
+
+
 class SystemStatusResponse(BaseModel):
     mode: str
     trading_enabled: bool
@@ -156,6 +183,7 @@ class SystemStatusResponse(BaseModel):
     database_connected: bool
     schema_version: int
     circuit_breaker: CircuitBreakerInfo | None = None
+    kill_switch: KillSwitchInfo | None = None
     version: str
     uptime_seconds: float
     started_at: str | None = None

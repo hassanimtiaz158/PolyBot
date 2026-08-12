@@ -124,3 +124,29 @@ def render_sidebar_mode(mode: str) -> None:
         f'<span class="dash-badge">{badge}</span></div>',
         unsafe_allow_html=True,
     )
+
+
+def render_kill_switch(status: object) -> None:
+    """Render the emergency-stop banner when the kill switch is engaged.
+
+    ``status`` is the ``/system/status`` payload.  When the kill switch
+    is KILLED a prominent alert banner is shown with the canonical
+    reason.  The dashboard only *displays* this state — it can never
+    change it (control commands require the dedicated control key).
+    """
+    if not isinstance(status, dict):
+        return
+    ks = status.get("kill_switch")
+    if not isinstance(ks, dict):
+        return
+    if str(ks.get("state")).upper() != "KILLED":
+        return
+    reason = str(ks.get("reason") or "MANUAL EMERGENCY STOP")
+    _inject_css()
+    st.markdown(
+        '<div class="dash-banner alert" style="--accent:#7f1d1d">'
+        '<span class="dash-badge">TRADING HALTED</span>'
+        f'<span class="dash-msg"><strong>Reason:</strong> {reason}</span>'
+        "</div>",
+        unsafe_allow_html=True,
+    )

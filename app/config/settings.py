@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     poly_passphrase: str | None = None
     poly_rpc_url: str | None = None
 
+    # ── Emergency control interface ─────────────────────────────────
+    # Dedicated secret for the writable /api/control/* endpoints
+    # (kill switch + resume).  Required even when POLY_API_KEY is unset.
+    # When this is empty, the control interface returns 503 (disabled)
+    # — it is never left open.
+    poly_control_key: str | None = None
+
     # ── Database ────────────────────────────────────────────────────
     database_url: str = "sqlite:///data/polymarket.db"
 

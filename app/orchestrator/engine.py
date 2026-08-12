@@ -19,6 +19,7 @@ from app.monitoring.health import health_status, run_all_checks
 from app.orchestrator.pipeline import PipelineResult
 from app.orchestrator.router import SignalRouter
 from app.risk.circuit_breaker import BreakerState, CircuitBreaker
+from app.risk.kill_switch import KILL_SWITCH_REASON, KillSwitch
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,10 @@ class Orchestrator:
         Three-state circuit breaker with SQLite persistence.
     mode : ModeState
         Operating mode state machine.
+    kill_switch : KillSwitch | None
+        Backend-controlled emergency kill switch.  When provided and
+        KILLED, the orchestrator skips signal generation entirely and no
+        new orders are produced.
     get_equity : Callable[[], float] | None
         Returns current portfolio equity.  Used by circuit breaker checks.
         Falls back to 10 000 when ``None``.
@@ -66,6 +71,7 @@ class Orchestrator:
         router: SignalRouter,
         breaker: CircuitBreaker,
         mode: ModeState,
+        kill_switch: KillSwitch | None = None,
         get_equity: Callable[[], float] | None = None,
         data_provider: Callable[[], Any] | None = None,
         scan_interval: int | None = None,
@@ -74,6 +80,7 @@ class Orchestrator:
         self._router = router
         self._breaker = breaker
         self._mode = mode
+        self._kill_switch = kill_switch
         self._get_equity = get_equity or (lambda: 10_000.0)
         self._data_provider = data_provider
         self._scan_interval = (
@@ -160,6 +167,13 @@ class Orchestrator:
 
         if self._breaker.state == BreakerState.HALTED:
             logger.warning("Skipping iteration — circuit breaker HALTED")
+            return
+
+        if self._kill_switch is not None and await self._kill_switch.is_killed():
+            logger.warning(
+                "Skipping iteration — kill switch active (%s)",
+                KILL_SWITCH_REASON,
+            )
             return
 
         market_features: dict[str, dict[str, Any]] = {}

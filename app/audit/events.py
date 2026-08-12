@@ -52,6 +52,8 @@ EVENT_TYPES = frozenset({
     "ORDER_CANCELLED",
     "POSITION_UPDATED",
     "CIRCUIT_BREAKER",
+    "KILL_SWITCH",
+    "KILL_SWITCH_RESUMED",
     "SYSTEM_START",
     "SYSTEM_STOP",
 })
@@ -69,6 +71,8 @@ SEVERITIES: dict[str, str] = {
     "ORDER_CANCELLED": "INFO",
     "POSITION_UPDATED": "INFO",
     "CIRCUIT_BREAKER": "CRITICAL",
+    "KILL_SWITCH": "CRITICAL",
+    "KILL_SWITCH_RESUMED": "INFO",
     "SYSTEM_START": "INFO",
     "SYSTEM_STOP": "INFO",
 }
@@ -80,6 +84,11 @@ ALERTS: dict[str, tuple[str, str, str]] = {
         "circuit_breaker",
         "Circuit breaker",
         "Circuit breaker tripped: {reason}",
+    ),
+    "KILL_SWITCH": (
+        "kill_switch",
+        "Emergency kill switch",
+        "Kill switch engaged: {reason}",
     ),
     "RISK_REJECTED": (
         "risk_rejected",

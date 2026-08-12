@@ -29,6 +29,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.routes import (
     audit,
+    control,
     dashboard,
     dashboard_ws,
     health,
@@ -181,12 +182,13 @@ def create_app(database: Database | None = None) -> FastAPI:
     app.state.started_at = None
     app.state.broadcaster = DashboardBroadcaster()
 
-    # CORS — restrict to known origins in production.
+    # CORS — restrict to known origins in production.  POST is required
+    # only for the keyed /api/control/* endpoints; display is still GET.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
         allow_credentials=False,
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
 
@@ -200,6 +202,7 @@ def create_app(database: Database | None = None) -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(status.router)
+    app.include_router(control.router)
     app.include_router(dashboard.router)
     app.include_router(dashboard_ws.router)
     app.include_router(markets.router)

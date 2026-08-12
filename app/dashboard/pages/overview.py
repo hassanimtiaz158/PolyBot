@@ -9,7 +9,10 @@ from app.dashboard.common import (
     get_dashboard,
     is_healthy,
 )
-from app.dashboard.components.banner import render_mode_banner
+from app.dashboard.components.banner import (
+    render_kill_switch,
+    render_mode_banner,
+)
 from app.dashboard.components.cards import kpi_row
 from app.dashboard.config import dashboard_settings
 
@@ -17,6 +20,7 @@ st.set_page_config(page_title="Overview", layout="wide", page_icon="ðŸ“Š")
 
 session = get_dashboard()
 render_mode_banner(session.mode)
+render_kill_switch(session.fetch("status"))
 
 st.title("Overview")
 

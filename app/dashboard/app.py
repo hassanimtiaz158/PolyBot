@@ -17,7 +17,10 @@ if str(REPO_ROOT) not in sys.path:
 import streamlit as st  # noqa: E402
 
 from app.dashboard.common import build_session  # noqa: E402
-from app.dashboard.components.banner import render_sidebar_mode  # noqa: E402
+from app.dashboard.components.banner import (  # noqa: E402
+    render_kill_switch,
+    render_sidebar_mode,
+)
 
 if "dash_session" not in st.session_state:
     st.session_state["dash_session"] = build_session()
@@ -25,6 +28,7 @@ if "dash_session" not in st.session_state:
 session = st.session_state["dash_session"]
 
 render_sidebar_mode(session.mode)
+render_kill_switch(session.fetch("status"))
 st.sidebar.caption(
     "Read-only dashboard. No orders can be submitted from here."
     if not session.demo
