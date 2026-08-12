@@ -83,6 +83,39 @@ async def _seed_winning_orders(db: Database) -> None:
     )
 
 
+async def _seed_mixed_trades(db: Database) -> None:
+    """Add losing filled orders to exercise win/loss and profit-factor stats."""
+    repo = OrderRepository(db)
+    await repo.insert(
+        Order(
+            order_id="ord_020",
+            market_id="mkt_003",
+            side="YES",
+            status="FILLED",
+            requested_price=0.55,
+            requested_size=100.0,
+            filled_size=100.0,
+            average_fill=0.60,
+            submitted_at="2026-08-03T10:00:00Z",
+            completed_at="2026-08-03T10:01:00Z",
+        )
+    )
+    await repo.insert(
+        Order(
+            order_id="ord_021",
+            market_id="mkt_001",
+            side="NO",
+            status="FILLED",
+            requested_price=0.40,
+            requested_size=100.0,
+            filled_size=100.0,
+            average_fill=0.40,
+            submitted_at="2026-08-04T10:00:00Z",
+            completed_at="2026-08-04T10:01:00Z",
+        )
+    )
+
+
 @pytest_asyncio.fixture
 async def api_db() -> AsyncGenerator[Database, None]:
     """In-memory database with base seed plus dashboard-specific rows."""
@@ -100,6 +133,33 @@ async def api_db() -> AsyncGenerator[Database, None]:
 async def client(api_db: Database) -> AsyncGenerator[httpx.AsyncClient, None]:
     """Async test client bound to the seeded database."""
     app = create_app(database=api_db)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url=BASE_URL
+    ) as test_client:
+        yield test_client
+
+
+@pytest_asyncio.fixture
+async def perf_db() -> AsyncGenerator[Database, None]:
+    """In-memory database seeded with both winning and losing fills."""
+    db = Database(db_path=":memory:")
+    await db.connect()
+    await db.init_schema()
+    await seed_data(db)
+    await _seed_snapshots(db)
+    await _seed_winning_orders(db)
+    await _seed_mixed_trades(db)
+    yield db
+    await db.close()
+
+
+@pytest_asyncio.fixture
+async def perf_client(
+    perf_db: Database,
+) -> AsyncGenerator[httpx.AsyncClient, None]:
+    """Async test client bound to the performance-seeded database."""
+    app = create_app(database=perf_db)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(
         transport=transport, base_url=BASE_URL
@@ -570,13 +630,150 @@ class TestPerformance:
         body = resp.json()
         assert body["total_realised_pnl"] == 4.0
         assert body["total_unrealised_pnl"] == 0.75
-        assert body["total_pnl"] == 4.75
+        assert body["total_pnl"] == 15.0
         assert body["open_positions"] == 2
         assert body["total_markets"] == 3
         assert body["total_signals"] == 3
         assert body["total_orders"] == 6
         assert body["filled_orders"] == 4
         assert body["timestamp"]
+
+    @pytest.mark.asyncio
+    async def test_returns_mode(self, client: httpx.AsyncClient):
+        body = (await client.get("/api/dashboard/performance")).json()
+        assert body["mode"] in {"PAPER", "LIVE"}
+
+    @pytest.mark.asyncio
+    async def test_returns_statistics(self, perf_client: httpx.AsyncClient):
+        body = (await perf_client.get("/api/dashboard/performance")).json()
+        assert body["today_pnl"] == 0.0
+        assert body["week_pnl"] == 0.0
+        assert body["month_pnl"] == pytest.approx(-5.0)
+        assert body["return_pct"] == pytest.approx(-0.0005)
+        assert body["max_drawdown"] == pytest.approx(0.002)
+        assert body["win_rate"] == 0.5
+        assert body["loss_rate"] == 0.5
+        assert body["profit_factor"] == 0.75
+        assert body["expectancy"] == pytest.approx(-5.0 / 6.0)
+        assert body["average_trade"] == pytest.approx(35.0 / 6.0)
+        assert body["average_win"] == pytest.approx(7.5)
+        assert body["average_loss"] == pytest.approx(-10.0)
+        assert body["number_of_trades"] == 6
+        assert body["average_holding_time"] == 60.0
+        assert body["average_net_edge"] == pytest.approx(0.04)
+        assert body["slippage"] == pytest.approx(5.0)
+
+    @pytest.mark.asyncio
+    async def test_returns_chart_series(self, perf_client: httpx.AsyncClient):
+        body = (await perf_client.get("/api/dashboard/performance")).json()
+        charts = body["charts"]
+
+        equity = charts["equity"]
+        assert [p["value"] for p in equity] == [
+            10000.0,
+            10000.0,
+            10000.0,
+            9990.0,
+            9980.0,
+            9990.0,
+            9995.0,
+        ]
+        assert [p["timestamp"] for p in equity] == [
+            "2026-08-01T07:00:00+00:00",
+            "2026-08-01T07:00:00+00:00",
+            "2026-08-01T09:00:00+00:00",
+            "2026-08-03T10:01:00+00:00",
+            "2026-08-04T10:01:00+00:00",
+            "2026-08-05T10:01:00+00:00",
+            "2026-08-06T10:01:00+00:00",
+        ]
+
+        daily = charts["daily_pnl"]
+        assert [p["value"] for p in daily] == [0.0, -10.0, -10.0, 10.0, 5.0]
+        assert [p["timestamp"] for p in daily] == [
+            "2026-08-01",
+            "2026-08-03",
+            "2026-08-04",
+            "2026-08-05",
+            "2026-08-06",
+        ]
+
+        cumulative = charts["cumulative_pnl"]
+        assert [p["value"] for p in cumulative] == [0.0, -10.0, -20.0, -10.0, -5.0]
+
+        drawdown = charts["drawdown"]
+        assert [p["value"] for p in drawdown] == [
+            0.0,
+            0.0,
+            0.0,
+            0.001,
+            0.002,
+            0.001,
+            0.0005,
+        ]
+
+        by_strategy = {
+            p["label"]: p["pnl"] for p in charts["by_strategy"]
+        }
+        assert by_strategy == {"microstructure": 0.0, "probability": 5.0, "UNKNOWN": -10.0}
+
+        by_category = {p["label"]: p["pnl"] for p in charts["by_category"]}
+        assert by_category == {"Other": -5.0}
+
+    @pytest.mark.asyncio
+    async def test_statistics_respect_date_window(
+        self, perf_client: httpx.AsyncClient
+    ):
+        body = (
+            await perf_client.get(
+                "/api/dashboard/performance?from_date=2026-08-04&to_date=2026-08-05"
+            )
+        ).json()
+        assert body["number_of_trades"] == 2
+        assert body["total_pnl"] == pytest.approx(0.0)
+        assert body["win_rate"] == 0.5
+        assert body["loss_rate"] == 0.5
+        assert body["profit_factor"] == 1.0
+        assert body["today_pnl"] == 0.0
+        assert body["week_pnl"] == 0.0
+        assert body["month_pnl"] == 0.0
+
+        equity = body["charts"]["equity"]
+        assert equity[0]["value"] == pytest.approx(9990.0)
+        assert [p["value"] for p in equity] == [9990.0, 9980.0, 9990.0]
+
+        cumulative = body["charts"]["cumulative_pnl"]
+        assert [p["value"] for p in cumulative] == [-10.0, 0.0]
+
+        daily = {p["timestamp"]: p["value"] for p in body["charts"]["daily_pnl"]}
+        assert daily == {"2026-08-04": -10.0, "2026-08-05": 10.0}
+
+    @pytest.mark.asyncio
+    async def test_empty_window_returns_zero_stats(
+        self, perf_client: httpx.AsyncClient
+    ):
+        body = (
+            await perf_client.get(
+                "/api/dashboard/performance?from_date=2027-01-01&to_date=2027-12-31"
+            )
+        ).json()
+        assert body["number_of_trades"] == 0
+        assert body["total_pnl"] == 0.0
+        assert body["win_rate"] is None
+        assert body["loss_rate"] is None
+        assert body["profit_factor"] is None
+        assert body["average_win"] is None
+        assert body["average_loss"] is None
+        assert body["charts"]["equity"] == [
+            {"timestamp": body["charts"]["equity"][0]["timestamp"], "value": 9995.0}
+        ]
+        assert body["charts"]["daily_pnl"] == []
+        assert body["charts"]["cumulative_pnl"] == []
+        assert body["charts"]["drawdown"] == [
+            {"timestamp": body["charts"]["drawdown"][0]["timestamp"], "value": 0.0}
+        ]
+        assert body["charts"]["by_strategy"] == []
+        assert body["charts"]["by_category"] == []
 
 
 # ====================================================================

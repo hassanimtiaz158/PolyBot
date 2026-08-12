@@ -436,6 +436,46 @@ a {
 }
 
 /* ============================================================
+   Performance page
+   ============================================================ */
+
+.view-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.view-head .view-title {
+  margin: 6px 0 20px;
+}
+
+.perf-filters .filter-input[type='date'] {
+  color-scheme: dark;
+}
+
+.perf-window-note {
+  align-self: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+
+.perf-charts {
+  margin-bottom: 14px;
+}
+
+.perf-disclaimer {
+  margin: 14px 0 0;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* ============================================================
    Tables
    ============================================================ */
 

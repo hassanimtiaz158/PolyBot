@@ -176,6 +176,35 @@ class RiskResponse(BaseModel):
     events: PaginatedResponse[RiskEventResponse]
 
 
+class PerformanceChartPoint(BaseModel):
+    """A single point on a performance chart series."""
+
+    timestamp: str
+    value: float
+
+
+class PerformanceBreakdownPoint(BaseModel):
+    """P&L attributed to a single strategy or market category."""
+
+    label: str
+    pnl: float
+
+
+class PerformanceCharts(BaseModel):
+    """Backend-computed chart series for the Performance page.
+
+    Every series is derived server-side from persisted order fills so
+    the dashboard never recomputes authoritative P&L.
+    """
+
+    equity: list[PerformanceChartPoint] = []
+    daily_pnl: list[PerformanceChartPoint] = []
+    cumulative_pnl: list[PerformanceChartPoint] = []
+    drawdown: list[PerformanceChartPoint] = []
+    by_strategy: list[PerformanceBreakdownPoint] = []
+    by_category: list[PerformanceBreakdownPoint] = []
+
+
 class PerformanceResponse(BaseModel):
     total_realised_pnl: float
     total_unrealised_pnl: float
@@ -186,6 +215,26 @@ class PerformanceResponse(BaseModel):
     total_orders: int
     filled_orders: int
     timestamp: str
+
+    # ── Performance statistics (all backend-computed) ──────────────
+    mode: str = "PAPER"
+    today_pnl: float = 0.0
+    week_pnl: float = 0.0
+    month_pnl: float = 0.0
+    return_pct: float | None = None
+    max_drawdown: float = 0.0
+    win_rate: float | None = None
+    loss_rate: float | None = None
+    profit_factor: float | None = None
+    expectancy: float | None = None
+    average_trade: float | None = None
+    average_win: float | None = None
+    average_loss: float | None = None
+    number_of_trades: int = 0
+    average_holding_time: float | None = None
+    average_net_edge: float | None = None
+    slippage: float | None = None
+    charts: PerformanceCharts = PerformanceCharts()
 
 
 # ── Dashboard aggregates ────────────────────────────────────────────

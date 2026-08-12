@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from app.api.models import (
     CircuitBreakerInfo,
@@ -29,6 +29,10 @@ from app.api.models import (
     EquityPoint,
     HealthCheckDetail,
     HealthResponse,
+    PerformanceBreakdownPoint,
+    PerformanceChartPoint,
+    PerformanceCharts,
+    PerformanceResponse,
     PositionResponse,
 )
 from app.config.settings import settings
@@ -456,4 +460,380 @@ async def build_risk(db: Database) -> DashboardRiskResponse:
         liquidity_status=await liquidity_status(db),
         data_freshness=await data_freshness_status(db),
         circuit_breaker=await _breaker_info(db),
+    )
+
+
+# ── Performance statistics (backend-computed, display only) ─────────
+
+
+def _start_of_week(now: datetime) -> datetime:
+    """Start of the current week (Monday 00:00 UTC)."""
+    return now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(
+        days=now.weekday()
+    )
+
+
+def _start_of_month(now: datetime) -> datetime:
+    """Start of the current calendar month (00:00 UTC)."""
+    return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def _parse_date_only(value: str | None, *, end_of_day: bool) -> datetime | None:
+    """Parse a ``YYYY-MM-DD`` bound as a full UTC datetime."""
+    if not value:
+        return None
+    try:
+        day = datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=UTC)
+    except (TypeError, ValueError):
+        return None
+    if end_of_day:
+        return day.replace(hour=23, minute=59, second=59, microsecond=999999)
+    return day.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _parse_window(
+    from_date: str | None, to_date: str | None
+) -> tuple[datetime | None, datetime | None]:
+    """Normalise date-window bounds to inclusive UTC datetimes.
+
+    Full ISO timestamps are kept as-is; bare ``YYYY-MM-DD`` values
+    expand to the start of the day (``from``) or end of the day (``to``).
+    """
+    from_dt = _parse_ts(from_date) if from_date else None
+    if from_date and (from_dt is None or from_dt.tzinfo is None):
+        from_dt = _parse_date_only(from_date, end_of_day=False)
+    to_dt = _parse_ts(to_date) if to_date else None
+    if to_date and (to_dt is None or to_dt.tzinfo is None):
+        to_dt = _parse_date_only(to_date, end_of_day=True)
+    if from_dt is not None and to_dt is not None and to_dt < from_dt:
+        from_dt, to_dt = to_dt, from_dt
+    return from_dt, to_dt
+
+
+def _order_time(order: Order) -> datetime | None:
+    """Best-effort completion timestamp for an order."""
+    return _parse_ts(order.completed_at or order.submitted_at)
+
+
+def _within_window(order: Order, from_dt: datetime | None, to_dt: datetime | None) -> bool:
+    """Whether an order falls inside an inclusive [from, to] window."""
+    ts = _order_time(order)
+    if ts is None:
+        return from_dt is None and to_dt is None
+    if from_dt is not None and ts < from_dt:
+        return False
+    if to_dt is not None and ts > to_dt:
+        return False
+    return True
+
+
+_CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "Sports": (
+        "sport", "match", "game", "champion", "tournament", "season", "score",
+        "nba", "nfl", "mlb", "football", "basketball", "baseball", "hockey",
+        "soccer", "tennis", "olympic", "race", "fight", "super bowl", "world cup",
+    ),
+    "Politics": (
+        "president", "election", "congress", "senate", "house", "vote",
+        "government", "senator", "primary", "debate", "campaign", "policy",
+    ),
+    "Economics": (
+        "economy", "inflation", "gdp", "fed", "interest rate", "unemployment",
+        "recession", "rate cut", "cpi", "stock market", "tariff",
+    ),
+    "Crypto": (
+        "bitcoin", "btc", "ethereum", "eth", "crypto", "coin", "token",
+        "solana", "defi", "blockchain", "etf",
+    ),
+    "Tech": (
+        "ai", "tech", "apple", "google", "microsoft", "tesla", "nvidia",
+        "software", "chip", "launch", "iphone",
+    ),
+    "Weather": (
+        "weather", "temperature", "hurricane", "storm", "snow", "rain",
+        "heat", "climate", "flood",
+    ),
+    "Entertainment": (
+        "movie", "oscar", "album", "song", "award", "box office", "netflix",
+        "grossing", "film",
+    ),
+}
+
+
+def _market_category(question: str) -> str:
+    """Classify a market question into a coarse display category.
+
+    Keyword matching is deterministic and display-only; markets that
+    match nothing are labelled ``Other``.
+    """
+    text = (question or "").lower()
+    for category, keywords in _CATEGORY_KEYWORDS.items():
+        if any(keyword in text for keyword in keywords):
+            return category
+    return "Other"
+
+
+def _order_slippage(order: Order) -> float:
+    """Slippage cost in USDC for a filled order.
+
+    Adverse price movement is ``|average_fill - requested_price|``;
+    multiplied by the filled size it gives the dollar cost of slippage.
+    """
+    if (
+        order.average_fill is None
+        or order.requested_price is None
+        or order.filled_size is None
+    ):
+        return 0.0
+    return abs(order.average_fill - order.requested_price) * float(order.filled_size)
+
+
+def _holding_time(order: Order) -> float | None:
+    """Seconds between submission and completion, if both timestamps exist."""
+    submitted = _parse_ts(order.submitted_at)
+    completed = _parse_ts(order.completed_at)
+    if submitted is None or completed is None:
+        return None
+    seconds = (completed - submitted).total_seconds()
+    return max(0.0, seconds)
+
+
+async def _signal_index(db: Database) -> dict[str, list[tuple[str, str, float | None]]]:
+    """Map each market to its signals: ``[(timestamp, strategy, net_edge)]``.
+
+    Used to attribute each order's P&L to the strategy (and net edge)
+    of the most recent signal for that market, matching the pipeline's
+    signal-driven execution model.
+    """
+    signals = await SignalRepository(db).list_recent(limit=1000)
+    index: dict[str, list[tuple[str, str, float | None]]] = {}
+    for signal in signals:
+        ts = signal.timestamp or ""
+        index.setdefault(signal.market_id, []).append(
+            (ts, signal.strategy, signal.net_edge)
+        )
+    for entries in index.values():
+        entries.sort(key=lambda e: e[0])
+    return index
+
+
+def _attribute_signal(
+    order: Order, index: dict[str, list[tuple[str, str, float | None]]]
+) -> tuple[str, float | None]:
+    """Attribute an order to its most recent prior signal for the market."""
+    entries = index.get(order.market_id)
+    if not entries:
+        return "UNKNOWN", None
+    order_ts = _order_time(order)
+    order_key = order_ts.isoformat() if order_ts is not None else "\uffff"
+    strategy: str = "UNKNOWN"
+    edge: float | None = None
+    for ts, candidate_strategy, candidate_edge in entries:
+        if ts > order_key:
+            break
+        strategy = candidate_strategy
+        edge = candidate_edge
+    return strategy, edge
+
+
+def _round_series(
+    values: list[PerformanceChartPoint],
+) -> list[PerformanceChartPoint]:
+    return [
+        PerformanceChartPoint(timestamp=p.timestamp, value=round(p.value, 6))
+        for p in values
+    ]
+
+
+def _max_drawdown_from_points(points: list[PerformanceChartPoint]) -> float:
+    """Maximum peak-to-trough drawdown as a fraction of peak equity."""
+    peak = -math.inf
+    max_dd = 0.0
+    for point in points:
+        peak = max(peak, point.value)
+        if peak > 0:
+            max_dd = max(max_dd, (peak - point.value) / peak)
+    return round(max_dd, 6)
+
+
+def _period_pnl(orders: list[Order], start: datetime) -> float:
+    """P&L of orders whose completion time is on/after ``start``."""
+    return round(
+        sum(
+            _order_pnl(order)
+            for order in orders
+            if (ts := _order_time(order)) is not None and ts >= start
+        ),
+        6,
+    )
+
+
+async def build_performance(
+    db: Database,
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> PerformanceResponse:
+    """Assemble the Performance page payload.
+
+    Every statistic and chart series is derived here from persisted
+    order fills — the dashboard displays these numbers verbatim and
+    never recomputes authoritative P&L client-side.
+    """
+    from_dt, to_dt = _parse_window(from_date, to_date)
+    all_orders = sorted(
+        await OrderRepository(db).list_filled(),
+        key=lambda o: o.completed_at or o.submitted_at or "",
+    )
+    windowed = [o for o in all_orders if _within_window(o, from_dt, to_dt)]
+
+    # ── Equity curve over the window (baseline = P&L before the window) ──
+    baseline = settings.initial_equity
+    if from_dt is not None:
+        baseline += sum(
+            _order_pnl(order)
+            for order in all_orders
+            if (ts := _order_time(order)) is not None and ts < from_dt
+        )
+    equity = baseline
+    equity_points: list[PerformanceChartPoint] = []
+    if windowed:
+        first_ts = _order_time(windowed[0])
+        equity_points.append(
+            PerformanceChartPoint(
+                timestamp=(from_dt or first_ts or datetime.now(UTC)).isoformat(),
+                value=round(equity, 6),
+            )
+        )
+        for order in windowed:
+            equity += _order_pnl(order)
+            equity_points.append(
+                PerformanceChartPoint(
+                    timestamp=(_order_time(order) or datetime.now(UTC)).isoformat(),
+                    value=round(equity, 6),
+                )
+            )
+    else:
+        equity_points.append(
+            PerformanceChartPoint(
+                timestamp=(from_dt or datetime.now(UTC)).isoformat(),
+                value=round(equity, 6),
+            )
+        )
+
+    # ── Daily P&L, cumulative P&L, drawdown ─────────────────────────────
+    daily_buckets: dict[str, float] = {}
+    for order in windowed:
+        ts = _order_time(order)
+        if ts is None:
+            continue
+        day = ts.date().isoformat()
+        daily_buckets[day] = daily_buckets.get(day, 0.0) + _order_pnl(order)
+    daily_pnl = [
+        PerformanceChartPoint(timestamp=day, value=round(value, 6))
+        for day, value in sorted(daily_buckets.items())
+    ]
+    cumulative: list[PerformanceChartPoint] = []
+    running = 0.0
+    for point in daily_pnl:
+        running += point.value
+        cumulative.append(
+            PerformanceChartPoint(timestamp=point.timestamp, value=round(running, 6))
+        )
+
+    peak = -math.inf
+    drawdown: list[PerformanceChartPoint] = []
+    for point in equity_points:
+        peak = max(peak, point.value)
+        if peak > 0:
+            drawdown.append(
+                PerformanceChartPoint(
+                    timestamp=point.timestamp,
+                    value=round((peak - point.value) / peak, 6),
+                )
+            )
+
+    # ── Trade statistics ────────────────────────────────────────────────
+    pnls = [_order_pnl(order) for order in windowed]
+    wins = [p for p in pnls if p > 0]
+    losses = [p for p in pnls if p < 0]
+    num_trades = len(pnls)
+    win_loss_count = len(wins) + len(losses)
+    gross_profit = sum(wins)
+    gross_loss = abs(sum(losses))
+    total_pnl = round(sum(pnls), 6)
+
+    signal_index = await _signal_index(db)
+    holdings = [h for h in (_holding_time(order) for order in windowed) if h is not None]
+    edges: list[float] = []
+    strategy_pnl: dict[str, float] = {}
+    category_pnl: dict[str, float] = {}
+    markets = {m.market_id: m for m in await MarketRepository(db).list_all()}
+    for order in windowed:
+        strategy, edge = _attribute_signal(order, signal_index)
+        strategy_pnl[strategy] = strategy_pnl.get(strategy, 0.0) + _order_pnl(order)
+        market = markets.get(order.market_id)
+        category = _market_category(market.question) if market else "Other"
+        category_pnl[category] = category_pnl.get(category, 0.0) + _order_pnl(order)
+        if edge is not None:
+            edges.append(float(edge))
+
+    total_slippage = sum(_order_slippage(order) for order in windowed)
+
+    def _mean(values: list[float]) -> float | None:
+        return round(sum(values) / len(values), 6) if values else None
+
+    now = datetime.now(UTC)
+    pnl_summary = await PositionRepository(db).pnl_summary()
+
+    return PerformanceResponse(
+        total_realised_pnl=pnl_summary["total_realised_pnl"],
+        total_unrealised_pnl=pnl_summary["total_unrealised_pnl"],
+        total_pnl=total_pnl,
+        open_positions=await PositionRepository(db).count(open_only=True),
+        total_markets=await MarketRepository(db).count(),
+        total_signals=await SignalRepository(db).count(),
+        total_orders=await OrderRepository(db).count(),
+        filled_orders=await OrderRepository(db).count_filled(),
+        timestamp=now.isoformat(),
+        mode=_operating_mode(settings.mode),
+        today_pnl=_period_pnl(windowed, _start_of_today()),
+        week_pnl=_period_pnl(windowed, _start_of_week(now)),
+        month_pnl=_period_pnl(windowed, _start_of_month(now)),
+        return_pct=(
+            round(total_pnl / settings.initial_equity, 6)
+            if settings.initial_equity > 0
+            else None
+        ),
+        max_drawdown=_max_drawdown_from_points(equity_points),
+        win_rate=round(len(wins) / win_loss_count, 6) if win_loss_count > 0 else None,
+        loss_rate=round(len(losses) / win_loss_count, 6)
+        if win_loss_count > 0
+        else None,
+        profit_factor=round(gross_profit / gross_loss, 6) if gross_loss > 0 else None,
+        expectancy=_mean(pnls),
+        average_trade=_mean([abs(p) for p in pnls]),
+        average_win=_mean(wins),
+        average_loss=_mean(losses),
+        number_of_trades=num_trades,
+        average_holding_time=_mean(holdings),
+        average_net_edge=_mean(edges),
+        slippage=round(total_slippage, 6) if windowed else None,
+        charts=PerformanceCharts(
+            equity=_round_series(equity_points),
+            daily_pnl=daily_pnl,
+            cumulative_pnl=cumulative,
+            drawdown=drawdown,
+            by_strategy=[
+                PerformanceBreakdownPoint(label=k, pnl=round(v, 6))
+                for k, v in sorted(
+                    strategy_pnl.items(), key=lambda item: item[1], reverse=True
+                )
+            ],
+            by_category=[
+                PerformanceBreakdownPoint(label=k, pnl=round(v, 6))
+                for k, v in sorted(
+                    category_pnl.items(), key=lambda item: item[1], reverse=True
+                )
+            ],
+        ),
     )

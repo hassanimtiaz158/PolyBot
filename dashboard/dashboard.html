@@ -177,14 +177,74 @@
 
     <!-- ======================= Performance ======================= -->
     <section class="view" id="view-performance" aria-labelledby="h-performance">
-      <h1 id="h-performance" class="view-title">Performance</h1>
-      <div class="cards" id="performance-cards" aria-label="Performance metrics"></div>
-      <article class="panel chart-panel">
-        <h2>Monthly Returns</h2>
-        <div class="chart-wrap">
-          <canvas id="monthly-chart" role="img" aria-label="Monthly returns bar chart"></canvas>
+      <div class="view-head">
+        <h1 id="h-performance" class="view-title">Performance</h1>
+        <span id="perf-mode-badge" class="mode-badge" role="status" aria-live="polite">
+          <span class="mode-dot" aria-hidden="true"></span>
+          <span id="perf-mode-label">PAPER PERFORMANCE</span>
+        </span>
+      </div>
+
+      <div class="signals-filters perf-filters" id="perf-filters" role="search" aria-label="Performance window filters">
+        <div class="filter-group">
+          <label class="filter-label" for="perf-from">From</label>
+          <input id="perf-from" class="filter-input" type="date">
         </div>
-      </article>
+        <div class="filter-group">
+          <label class="filter-label" for="perf-to">To</label>
+          <input id="perf-to" class="filter-input" type="date">
+        </div>
+        <button id="perf-apply" class="filter-reset" type="button">Apply Window</button>
+        <button id="perf-reset" class="filter-reset" type="button">Clear Window</button>
+        <span class="perf-window-note" id="perf-window-note">Showing all-time performance</span>
+      </div>
+
+      <div class="cards" id="performance-cards" aria-label="Performance metrics"></div>
+
+      <div class="charts perf-charts" aria-label="Performance charts">
+        <article class="panel chart-panel chart-primary">
+          <h2>Equity Curve</h2>
+          <div class="chart-wrap">
+            <canvas id="perf-equity-chart" role="img" aria-label="Equity curve for the selected window"></canvas>
+          </div>
+          <p class="chart-note" id="perf-equity-note" aria-hidden="true"></p>
+        </article>
+        <article class="panel chart-panel">
+          <h2>Daily P&amp;L</h2>
+          <div class="chart-wrap">
+            <canvas id="perf-daily-chart" role="img" aria-label="Daily profit and loss for the selected window"></canvas>
+          </div>
+        </article>
+        <article class="panel chart-panel">
+          <h2>Cumulative P&amp;L</h2>
+          <div class="chart-wrap">
+            <canvas id="perf-cumulative-chart" role="img" aria-label="Cumulative profit and loss for the selected window"></canvas>
+          </div>
+        </article>
+        <article class="panel chart-panel">
+          <h2>Drawdown</h2>
+          <div class="chart-wrap">
+            <canvas id="perf-drawdown-chart" role="img" aria-label="Drawdown for the selected window"></canvas>
+          </div>
+        </article>
+        <article class="panel chart-panel">
+          <h2>P&amp;L by Strategy</h2>
+          <div class="chart-wrap">
+            <canvas id="perf-strategy-chart" role="img" aria-label="Profit and loss split by strategy"></canvas>
+          </div>
+        </article>
+        <article class="panel chart-panel">
+          <h2>P&amp;L by Category</h2>
+          <div class="chart-wrap">
+            <canvas id="perf-category-chart" role="img" aria-label="Profit and loss split by market category"></canvas>
+          </div>
+        </article>
+      </div>
+
+      <p class="perf-disclaimer" id="perf-disclaimer" role="note">
+        Historical performance does not guarantee future profitability. All figures are
+        computed server-side from persisted order fills and are provided for analysis only.
+      </p>
     </section>
 
     <!-- ======================= Risk ======================= -->

@@ -190,6 +190,21 @@ async function main() {
   assert.equal(elFor('#conn-banner').hidden, true, 'no banner before first failure');
   assert.equal(dataStatus().text, 'DATA LIVE', 'initial REST data is live');
 
+  /* --- performance page: paper label, KPI cards, window note --- */
+  assert.equal(
+    elFor('#perf-mode-label').textContent,
+    'PAPER PERFORMANCE',
+    'performance page labels PAPER PERFORMANCE in paper mode',
+  );
+  assert.ok(text('#performance-cards').includes('Total P&L (window)'), 'performance KPI cards render');
+  assert.ok(text('#performance-cards').includes('Win Rate'), 'performance KPI cards include win rate');
+  assert.ok(text('#performance-cards').includes('Max Drawdown'), 'performance KPI cards include max drawdown');
+  assert.equal(
+    elFor('#perf-window-note').textContent,
+    'Showing all-time performance',
+    'performance window note defaults to all-time',
+  );
+
   const sock = FakeWebSocket.instances[0];
 
   /* --- connected: banner stays hidden, re-sync happens --- */

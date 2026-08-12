@@ -329,6 +329,13 @@ const signalsFilter = {
   sortDir: 'desc',
 };
 
+// Performance page analysis window (sent to the backend; the server
+// computes every windowed value — the client never re-derives them).
+const performanceFilter = {
+  from: '',
+  to: '',
+};
+
 /* ================================================================
    Loaders — map API payloads into render-friendly shapes.
    The map* functions are shared with the WebSocket event handlers so
@@ -494,9 +501,22 @@ async function loadOrders() {
   state.groups.orders.data = mapOrders(d);
 }
 
-async function loadPerformance() {
-  const d = await fetchJSON('/api/dashboard/performance');
-  state.groups.performance.data = {
+function performanceQuery() {
+  const params = new URLSearchParams();
+  if (performanceFilter.from) params.set('from_date', performanceFilter.from);
+  if (performanceFilter.to) params.set('to_date', performanceFilter.to);
+  const qs = params.toString();
+  return qs ? `?${qs}` : '';
+}
+
+function mapPerformance(d) {
+  const points = (list) =>
+    (list || []).map((p) => ({ label: fmtDay(p.timestamp), timestamp: p.timestamp, value: p.value == null ? 0 : p.value }));
+  const breakdown = (list) =>
+    (list || []).map((p) => ({ label: p.label || '—', value: p.pnl == null ? 0 : p.pnl }));
+  const charts = d.charts || {};
+  return {
+    mode: d.mode || 'PAPER',
     totalRealisedPnl: d.total_realised_pnl,
     totalUnrealisedPnl: d.total_unrealised_pnl,
     totalPnl: d.total_pnl,
@@ -505,8 +525,37 @@ async function loadPerformance() {
     totalSignals: d.total_signals,
     totalOrders: d.total_orders,
     filledOrders: d.filled_orders,
+    todayPnl: d.today_pnl,
+    weekPnl: d.week_pnl,
+    monthPnl: d.month_pnl,
+    returnPct: d.return_pct,
+    maxDrawdown: d.max_drawdown,
+    winRate: d.win_rate,
+    lossRate: d.loss_rate,
+    profitFactor: d.profit_factor,
+    expectancy: d.expectancy,
+    averageTrade: d.average_trade,
+    averageWin: d.average_win,
+    averageLoss: d.average_loss,
+    numberOfTrades: d.number_of_trades,
+    averageHoldingTime: d.average_holding_time,
+    averageNetEdge: d.average_net_edge,
+    slippage: d.slippage,
+    charts: {
+      equity: points(charts.equity),
+      dailyPnl: points(charts.daily_pnl),
+      cumulativePnl: points(charts.cumulative_pnl),
+      drawdown: points(charts.drawdown),
+      byStrategy: breakdown(charts.by_strategy),
+      byCategory: breakdown(charts.by_category),
+    },
     timestamp: fmtDateTime(d.timestamp),
   };
+}
+
+async function loadPerformance() {
+  const d = await fetchJSON(`/api/dashboard/performance${performanceQuery()}`);
+  state.groups.performance.data = mapPerformance(d);
 }
 
 async function loadRisk() {
@@ -785,12 +834,12 @@ const WS_HANDLERS = {
     applyWSGroup('orders', mapOrders(data));
     renderOrdersTable();
     renderOrdersFullTable();
-    renderPerformanceCards();
+    renderPerformance();
     updateCharts();
     // Win/loss, performance totals and the equity curve derive from
     // order history, so pull those groups on demand (they have no
     // dedicated event type).
-    refreshGroup('performance', [renderPerformanceCards]);
+    refreshGroup('performance', [renderPerformance]);
     refreshGroup('equity', [updateCharts]);
     updateDataStatus();
   },
@@ -799,10 +848,10 @@ const WS_HANDLERS = {
     applyWSGroup('overview', mapOverview(data));
     renderOverviewCards();
     renderPositionsSummary();
-    renderPerformanceCards();
+    renderPerformance();
     updateCharts();
     refreshGroup('equity', [updateCharts]);
-    refreshGroup('performance', [renderPerformanceCards]);
+    refreshGroup('performance', [renderPerformance]);
     updateDataStatus();
   },
 
@@ -840,6 +889,42 @@ const WS_HANDLERS = {
     updateDataStatus();
   },
 };
+
+function initPerformanceFilters() {
+  const from = $('#perf-from');
+  const to = $('#perf-to');
+  const applyBtn = $('#perf-apply');
+  const resetBtn = $('#perf-reset');
+  if (!from || !to || !applyBtn || !resetBtn) return;
+
+  const syncFromState = () => {
+    if (from.value !== performanceFilter.from) from.value = performanceFilter.from;
+    if (to.value !== performanceFilter.to) to.value = performanceFilter.to;
+  };
+  const applyWindow = () => {
+    performanceFilter.from = from.value || '';
+    performanceFilter.to = to.value || '';
+    const g = state.groups.performance;
+    g.data = null;
+    g.status = 'idle';
+    g.error = null;
+    renderPerformance();
+    loadGroup('performance');
+  };
+
+  applyBtn.addEventListener('click', applyWindow);
+  resetBtn.addEventListener('click', () => {
+    from.value = '';
+    to.value = '';
+    applyWindow();
+  });
+  [from, to].forEach((input) => {
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') applyWindow();
+    });
+  });
+  syncFromState();
+}
 
 /* ================================================================
    Staleness — DATA STALE indicator
@@ -1372,6 +1457,34 @@ function renderAuditTable() {
   renderTable(table, 'Audit trail', auditColumns, g.data, 'No audit events');
 }
 
+function renderPerformance() {
+  renderPerformanceMode();
+  renderPerformanceWindowNote();
+  renderPerformanceCards();
+  renderPerformanceCharts();
+}
+
+function renderPerformanceMode() {
+  const label = $('#perf-mode-label');
+  if (!label) return;
+  const g = state.groups.performance;
+  const mode = g.status === 'ok' && g.data ? String(g.data.mode || 'PAPER').toUpperCase() : 'PAPER';
+  label.textContent = mode === 'LIVE' ? 'LIVE PERFORMANCE' : 'PAPER PERFORMANCE';
+  const badge = $('#perf-mode-badge');
+  if (badge) badge.classList.toggle('mode-halted', mode !== 'LIVE' && mode !== 'PAPER');
+}
+
+function renderPerformanceWindowNote() {
+  const note = $('#perf-window-note');
+  if (!note) return;
+  const from = performanceFilter.from;
+  const to = performanceFilter.to;
+  if (from && to) note.textContent = `Analysis window ${from} → ${to} UTC`;
+  else if (from) note.textContent = `Analysis window from ${from} UTC`;
+  else if (to) note.textContent = `Analysis window up to ${to} UTC`;
+  else note.textContent = 'Showing all-time performance';
+}
+
 function renderPerformanceCards() {
   const g = state.groups.performance;
   const container = $('#performance-cards');
@@ -1380,17 +1493,100 @@ function renderPerformanceCards() {
     return;
   }
   const p = g.data;
+  const tradesSub = `window ${num(p.numberOfTrades == null ? 0 : p.numberOfTrades)} filled order${p.numberOfTrades === 1 ? '' : 's'}`;
   const cards = [
-    metricCard({ label: 'Total P&L', value: signedMoney(p.totalPnl), tone: pnlTone(p.totalPnl) }),
-    metricCard({ label: 'Realised P&L', value: signedMoney(p.totalRealisedPnl), tone: pnlTone(p.totalRealisedPnl) }),
-    metricCard({ label: 'Unrealised P&L', value: signedMoney(p.totalUnrealisedPnl), tone: pnlTone(p.totalUnrealisedPnl) }),
-    metricCard({ label: 'Open Positions', value: num(p.openPositions) }),
-    metricCard({ label: 'Markets', value: num(p.totalMarkets) }),
-    metricCard({ label: 'Signals', value: num(p.totalSignals) }),
-    metricCard({ label: 'Orders', value: `${num(p.totalOrders)} (${num(p.filledOrders)} filled)` }),
-    metricCard({ label: 'Last Updated', value: p.timestamp, sub: 'server time' }),
+    metricCard({ label: 'Total P&L (window)', value: signedMoney(p.totalPnl), tone: pnlTone(p.totalPnl), sub: tradesSub, highlight: true }),
+    metricCard({ label: "Today's P&L", value: signedMoney(p.todayPnl), tone: pnlTone(p.todayPnl), sub: 'since midnight UTC' }),
+    metricCard({ label: 'Week P&L', value: signedMoney(p.weekPnl), tone: pnlTone(p.weekPnl), sub: 'since Monday UTC' }),
+    metricCard({ label: 'Month P&L', value: signedMoney(p.monthPnl), tone: pnlTone(p.monthPnl), sub: 'since 1st of month UTC' }),
+    metricCard({
+      label: 'Return %',
+      value: p.returnPct == null ? '—' : pct2(p.returnPct),
+      tone: p.returnPct == null ? 'default' : pnlTone(p.returnPct),
+      sub: 'window P&L ÷ initial equity',
+    }),
+    metricCard({
+      label: 'Max Drawdown',
+      value: p.maxDrawdown == null ? '—' : `-${pct2(p.maxDrawdown)}`,
+      tone: p.maxDrawdown != null && p.maxDrawdown > 0.08 ? 'neg' : 'default',
+      sub: 'peak to trough (window)',
+    }),
+    metricCard({
+      label: 'Win Rate',
+      value: p.winRate == null ? '—' : pct1(p.winRate * 100),
+      tone: p.winRate == null ? 'default' : p.winRate >= 0.5 ? 'pos' : 'neg',
+      sub: 'winning trades ÷ decided trades',
+    }),
+    metricCard({
+      label: 'Loss Rate',
+      value: p.lossRate == null ? '—' : pct1(p.lossRate * 100),
+      tone: p.lossRate == null ? 'default' : p.lossRate > 0.5 ? 'neg' : 'default',
+      sub: 'losing trades ÷ decided trades',
+    }),
+    metricCard({ label: 'Profit Factor', value: p.profitFactor == null ? '—' : p.profitFactor.toFixed(2), sub: 'gross profit ÷ gross loss' }),
+    metricCard({ label: 'Expectancy', value: signedMoney(p.expectancy), tone: pnlTone(p.expectancy), sub: 'mean P&L per trade' }),
+    metricCard({ label: 'Average Trade', value: signedMoney(p.averageTrade), tone: pnlTone(p.averageTrade), sub: 'mean absolute P&L' }),
+    metricCard({ label: 'Average Win', value: p.averageWin == null ? '—' : signedMoney(p.averageWin), tone: p.averageWin != null ? 'pos' : 'default' }),
+    metricCard({ label: 'Average Loss', value: p.averageLoss == null ? '—' : signedMoney(p.averageLoss), tone: p.averageLoss != null ? 'neg' : 'default' }),
+    metricCard({ label: 'Number of Trades', value: optNum(p.numberOfTrades), sub: tradesSub }),
+    metricCard({ label: 'Avg Holding Time', value: fmtDuration(p.averageHoldingTime), sub: 'filled order duration' }),
+    metricCard({ label: 'Avg Net Edge', value: p.averageNetEdge == null ? '—' : pct2(p.averageNetEdge), sub: 'signal edge at entry' }),
+    metricCard({ label: 'Slippage', value: p.slippage == null ? '—' : money(p.slippage), tone: p.slippage != null && p.slippage > 0 ? 'neg' : 'default', sub: 'fill slippage (window)' }),
+    metricCard({ label: 'Realised P&L (all-time)', value: signedMoney(p.totalRealisedPnl), tone: pnlTone(p.totalRealisedPnl), sub: 'closed-position P&L, all-time' }),
   ];
   container.replaceChildren(...cards);
+}
+
+function renderPerformanceCharts() {
+  if (!charts.perfEquity) return;
+
+  const g = state.groups.performance;
+  const empty = g.status !== 'ok' || !g.data;
+  const c = empty ? { equity: [], dailyPnl: [], cumulativePnl: [], drawdown: [], byStrategy: [], byCategory: [] } : g.data.charts;
+
+  const equityLabels = c.equity.map((p) => fmtDateTime(p.timestamp));
+  charts.perfEquity.data.labels = equityLabels;
+  charts.perfEquity.data.datasets[0].data = c.equity.map((p) => p.value);
+  charts.perfEquity.update('none');
+
+  const note = $('#perf-equity-note');
+  if (note) {
+    if (empty) note.textContent = 'Unable to load live data — performance API unavailable.';
+    else if (c.equity.length === 0) note.textContent = 'No equity data in the selected window.';
+    else note.textContent = `${num(c.equity.length)} observations · last ${money(c.equity[c.equity.length - 1].value)}`;
+  }
+
+  const dailyLabels = c.dailyPnl.map((p) => p.label);
+  charts.perfDaily.data.labels = dailyLabels;
+  charts.perfDaily.data.datasets[0].data = c.dailyPnl.map((p) => p.value);
+  charts.perfDaily.data.datasets[0].backgroundColor = c.dailyPnl.map((p) =>
+    p.value >= 0 ? 'rgba(34,197,94,0.75)' : 'rgba(239,68,68,0.75)',
+  );
+  charts.perfDaily.update('none');
+
+  charts.perfCumulative.data.labels = c.cumulativePnl.map((p) => p.label);
+  charts.perfCumulative.data.datasets[0].data = c.cumulativePnl.map((p) => p.value);
+  charts.perfCumulative.update('none');
+
+  charts.perfDrawdown.data.labels = c.drawdown.map((p) => fmtDateTime(p.timestamp));
+  charts.perfDrawdown.data.datasets[0].data = c.drawdown.map((p) => p.value);
+  charts.perfDrawdown.update('none');
+
+  const strategy = c.byStrategy;
+  charts.perfStrategy.data.labels = strategy.map((p) => p.label);
+  charts.perfStrategy.data.datasets[0].data = strategy.map((p) => p.value);
+  charts.perfStrategy.data.datasets[0].backgroundColor = strategy.map((p) =>
+    p.value >= 0 ? 'rgba(34,197,94,0.75)' : 'rgba(239,68,68,0.75)',
+  );
+  charts.perfStrategy.update('none');
+
+  const category = c.byCategory;
+  charts.perfCategory.data.labels = category.map((p) => p.label);
+  charts.perfCategory.data.datasets[0].data = category.map((p) => p.value);
+  charts.perfCategory.data.datasets[0].backgroundColor = category.map((p) =>
+    p.value >= 0 ? 'rgba(0,200,255,0.8)' : 'rgba(239,68,68,0.8)',
+  );
+  charts.perfCategory.update('none');
 }
 
 function buildRiskTiles() {
@@ -1779,7 +1975,7 @@ function renderAll() {
   renderOrdersTable();
   renderOrdersFullTable();
   renderAuditTable();
-  renderPerformanceCards();
+  renderPerformance();
   renderRisk();
   renderRiskPage();
   renderSystem();
@@ -2116,7 +2312,30 @@ function createCharts() {
     plugins: [doughnutCenter],
   });
 
-  charts.dailyPerf = new Chart($('#monthly-chart').getContext('2d'), {
+  /* ---- Performance page charts (windowed, backend-computed) ---- */
+  const perfLine = (label, color) => ({
+    type: 'line',
+    data: { labels: [], datasets: [{ label, data: [], borderColor: color, backgroundColor: 'rgba(0,200,255,0) ', fill: false, tension: 0.35, borderWidth: 2, pointRadius: 0, pointHitRadius: 10 }] },
+    options: { ...baseOptions, scales: { x: baseOptions.scales.x, y: { ...baseOptions.scales.y, ticks: { ...baseOptions.scales.y.ticks, callback: (v) => moneyInt(v) } } } },
+  });
+
+  const perfEquityCtx = $('#perf-equity-chart').getContext('2d');
+  const perfGrad = perfEquityCtx.createLinearGradient(0, 0, 0, 260);
+  perfGrad.addColorStop(0, 'rgba(0,200,255,0.28)');
+  perfGrad.addColorStop(1, 'rgba(0,200,255,0)');
+  charts.perfEquity = new Chart(perfEquityCtx, {
+    type: 'line',
+    data: { labels: [], datasets: [{ label: 'Equity', data: [], borderColor: '#00c8ff', backgroundColor: perfGrad, fill: true, tension: 0.35, borderWidth: 2, pointRadius: 0, pointHitRadius: 10 }] },
+    options: {
+      ...baseOptions,
+      scales: {
+        x: baseOptions.scales.x,
+        y: { ...baseOptions.scales.y, ticks: { ...baseOptions.scales.y.ticks, callback: (v) => moneyInt(v) } },
+      },
+    },
+  });
+
+  charts.perfDaily = new Chart($('#perf-daily-chart').getContext('2d'), {
     type: 'bar',
     data: { labels: [], datasets: [{ label: 'Daily P&L', data: [], borderRadius: 3 }] },
     options: {
@@ -2124,6 +2343,48 @@ function createCharts() {
       scales: {
         x: baseOptions.scales.x,
         y: { ...baseOptions.scales.y, ticks: { ...baseOptions.scales.y.ticks, callback: (v) => moneyInt(v) } },
+      },
+    },
+  });
+
+  charts.perfCumulative = new Chart($('#perf-cumulative-chart').getContext('2d'), {
+    ...perfLine('Cumulative P&L', '#34d399'),
+  });
+
+  charts.perfDrawdown = new Chart($('#perf-drawdown-chart').getContext('2d'), {
+    type: 'line',
+    data: { labels: [], datasets: [{ label: 'Drawdown', data: [], borderColor: '#f87171', backgroundColor: 'rgba(248,113,113,0.12)', fill: true, tension: 0.35, borderWidth: 2, pointRadius: 0, pointHitRadius: 10 }] },
+    options: {
+      ...baseOptions,
+      scales: {
+        x: baseOptions.scales.x,
+        y: { ...baseOptions.scales.y, ticks: { ...baseOptions.scales.y.ticks, callback: (v) => pct2(v) } },
+      },
+    },
+  });
+
+  charts.perfStrategy = new Chart($('#perf-strategy-chart').getContext('2d'), {
+    type: 'bar',
+    data: { labels: [], datasets: [{ label: 'P&L', data: [], borderRadius: 3 }] },
+    options: {
+      ...baseOptions,
+      indexAxis: 'y',
+      scales: {
+        x: { ...baseOptions.scales.y, ticks: { ...baseOptions.scales.y.ticks, callback: (v) => moneyInt(v) } },
+        y: { ...baseOptions.scales.x, ticks: { ...baseOptions.scales.x.ticks, maxTicksLimit: 8 } },
+      },
+    },
+  });
+
+  charts.perfCategory = new Chart($('#perf-category-chart').getContext('2d'), {
+    type: 'bar',
+    data: { labels: [], datasets: [{ label: 'P&L', data: [], borderRadius: 3 }] },
+    options: {
+      ...baseOptions,
+      indexAxis: 'y',
+      scales: {
+        x: { ...baseOptions.scales.y, ticks: { ...baseOptions.scales.y.ticks, callback: (v) => moneyInt(v) } },
+        y: { ...baseOptions.scales.x, ticks: { ...baseOptions.scales.x.ticks, maxTicksLimit: 8 } },
       },
     },
   });
@@ -2176,11 +2437,13 @@ function updateCharts() {
     chart.update('none');
   };
   applyDaily(charts.daily);
-  applyDaily(charts.dailyPerf);
 
   const wl = getWinLoss();
   charts.winloss.data.datasets[0].data = wl ? [wl.wins, wl.losses] : [0, 0];
   charts.winloss.update('none');
+
+  // Performance page charts derive from the windowed performance payload.
+  renderPerformanceCharts();
 }
 
 /* ================================================================
@@ -2247,6 +2510,7 @@ function init() {
   initNav();
   initKillSwitch();
   initSignalsFilters();
+  initPerformanceFilters();
   initPositionDrawer();
   startScheduler();
   connectWS();

@@ -9,8 +9,6 @@ serialized in responses.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 from fastapi import APIRouter, Depends, Query
 
 from app.api import dashboard_service
@@ -34,7 +32,6 @@ from app.storage.db import Database
 from app.storage.repositories import (
     MarketRepository,
     OrderRepository,
-    PositionRepository,
     RiskEventRepository,
     SignalRepository,
     SnapshotRepository,
@@ -248,21 +245,27 @@ async def get_dashboard_orders(
 )
 async def get_dashboard_performance(
     db: Database = Depends(get_db),
+    from_date: str | None = Query(
+        None,
+        min_length=8,
+        max_length=32,
+        description="Start of analysis window (YYYY-MM-DD or ISO datetime, inclusive)",
+    ),
+    to_date: str | None = Query(
+        None,
+        min_length=8,
+        max_length=32,
+        description="End of analysis window (YYYY-MM-DD or ISO datetime, inclusive)",
+    ),
 ) -> PerformanceResponse:
-    """Return P&L totals and activity counts for the dashboard."""
-    position_repo = PositionRepository(db)
-    order_repo = OrderRepository(db)
-    pnl = await position_repo.pnl_summary()
-    return PerformanceResponse(
-        total_realised_pnl=pnl["total_realised_pnl"],
-        total_unrealised_pnl=pnl["total_unrealised_pnl"],
-        total_pnl=pnl["total_realised_pnl"] + pnl["total_unrealised_pnl"],
-        open_positions=await position_repo.count(open_only=True),
-        total_markets=await MarketRepository(db).count(),
-        total_signals=await SignalRepository(db).count(),
-        total_orders=await order_repo.count(),
-        filled_orders=await order_repo.count_filled(),
-        timestamp=datetime.now(UTC).isoformat(),
+    """Return P&L totals, trade statistics, and chart series.
+
+    Every value is computed server-side from persisted order fills and
+    attributed signals; ``from_date`` / ``to_date`` bound the analysis
+    window for the statistics and charts.
+    """
+    return await dashboard_service.build_performance(
+        db, from_date=from_date, to_date=to_date
     )
 
 
