@@ -40,6 +40,7 @@ class Settings(BaseSettings):
 
     # ── Logging ─────────────────────────────────────────────────────
     log_level: str = "INFO"
+    log_format: str = "structured"
 
     # ── Risk limits (conservative defaults — all non-negative) ─────
     max_position_pct: float = Field(default=0.01, ge=0.0, le=1.0)
@@ -72,6 +73,7 @@ class Settings(BaseSettings):
     walk_forward_fallback_synthetic: bool = True
 
     # ── Monitoring ──────────────────────────────────────────────────
+    health_check_interval_seconds: int = Field(default=30, ge=1)
 
     # ── Real-time dashboard ─────────────────────────────────────────
     # How often the server-side change detector probes the database for

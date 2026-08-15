@@ -100,7 +100,7 @@ class TestHealth:
         assert healthy is True
 
     async def test_unhealthy(self, adapter: ClobAdapter) -> None:
-        with patch.object(adapter, "_request", AsyncMock(return_value=None)):
+        with patch.object(adapter, "_request", AsyncMock(side_effect=RuntimeError("fail"))):
             healthy = await adapter.health()
         assert healthy is False
 

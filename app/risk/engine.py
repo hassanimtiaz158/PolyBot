@@ -74,6 +74,7 @@ class RiskDecision:
     net_edge: float | None = None
     risk_metrics: dict[str, float] = field(default_factory=dict)
     breaker_state: str | None = None
+    extra: dict = field(default_factory=dict)
 
 
 class RiskEngine:

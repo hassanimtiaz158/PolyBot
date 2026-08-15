@@ -55,7 +55,10 @@ class VolatilityFeatures:
             return None
 
         mean = sum(log_returns) / len(log_returns)
-        variance = sum((r - mean) ** 2 for r in log_returns) / (len(log_returns) - 1)
+        if len(log_returns) == 1:
+            variance = 0.0
+        else:
+            variance = sum((r - mean) ** 2 for r in log_returns) / (len(log_returns) - 1)
         return sqrt(variance)
 
     # ── Batch compute ──────────────────────────────────────────────
