@@ -11,6 +11,8 @@ from typing import Any
 
 import httpx
 
+from app.data.retry import parse_retry_after
+
 logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────
@@ -137,10 +139,10 @@ class GammaAdapter:
                     params=params,
                     timeout=DEFAULT_TIMEOUT,
                 )
-                self._last_request_time = asyncio.get_event_loop().time()
+                self._last_request_time = asyncio.get_running_loop().time()
 
                 if response.status_code == 429:
-                    retry_after = _parse_retry_after(response)
+                    retry_after = parse_retry_after(response)
                     logger.warning(
                         "Rate limited on %s, retrying after %.1fs (attempt %d/%d)",
                         path,
@@ -206,19 +208,7 @@ class GammaAdapter:
 
     async def _rate_limit_delay(self) -> None:
         """Ensure we don't exceed a polite request rate."""
-        loop = asyncio.get_event_loop()
-        now = loop.time()
+        now = asyncio.get_running_loop().time()
         elapsed = now - self._last_request_time
         if elapsed < REQUEST_DELAY:
             await asyncio.sleep(REQUEST_DELAY - elapsed)
-
-
-def _parse_retry_after(response: httpx.Response) -> float:
-    """Extract retry-after seconds from a 429 response."""
-    val = response.headers.get("Retry-After")
-    if val is not None:
-        try:
-            return float(val)
-        except ValueError:
-            pass
-    return 5.0

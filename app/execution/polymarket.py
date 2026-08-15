@@ -60,7 +60,7 @@ CHAIN_ID = 137
 ORDER_TYPES = {"GTC", "FOK", "GTD", "FAK"}
 
 FIXED_MATH_DECIMALS = 6
-FIXED_MATHPLIER = 10 ** FIXED_MATH_DECIMALS
+FIXED_MATHPLIER: int = 10**FIXED_MATH_DECIMALS
 
 DEFAULT_TIMEOUT = 10.0
 MAX_RETRIES = 3
@@ -256,7 +256,7 @@ def _to_fixed_math(value: float) -> str:
 def _from_fixed_math(value: str) -> float:
     """Convert Polymarket fixed-math string to human-readable float."""
     try:
-        return int(value) / FIXED_MATHPLIER
+        return float(value) / FIXED_MATHPLIER
     except (ValueError, TypeError):
         return 0.0
 
@@ -421,6 +421,8 @@ class PolymarketExecution(ExecutionAdapter):
             return self._build_rejected(order_id, market_id, side, size, str(exc))
 
         # -- Build CLOB V2 order payload ---------------------------------
+        creds = self._credentials
+        assert creds is not None  # guaranteed by _run_all_safety_checks
         clob_side = _SIDE_MAP.get(side, "BUY")
         maker_amount = size
         taker_amount = size * price
@@ -429,8 +431,8 @@ class PolymarketExecution(ExecutionAdapter):
         salt = str(int(time.time() * 1000000) % (2**63))
 
         payload_order = {
-            "maker": self._credentials.address,
-            "signer": self._credentials.address,
+            "maker": creds.address,
+            "signer": creds.address,
             "tokenId": token_id,
             "makerAmount": _to_fixed_math(maker_amount),
             "takerAmount": _to_fixed_math(taker_amount),
@@ -446,7 +448,7 @@ class PolymarketExecution(ExecutionAdapter):
 
         request_body = {
             "order": payload_order,
-            "owner": self._credentials.api_key,
+            "owner": creds.api_key,
             "orderType": "GTC",
             "deferExec": False,
             "postOnly": False,
@@ -638,6 +640,8 @@ class PolymarketExecution(ExecutionAdapter):
         body: str = "",
     ) -> Any:
         """Execute a single authenticated HTTP request."""
+        if self._credentials is None:
+            raise SafetyViolation("Polymarket credentials not configured")
         client = await self._get_client()
         headers = _auth_headers(self._credentials, method, path, body)
 

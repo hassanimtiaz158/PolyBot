@@ -24,7 +24,6 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
-from typing import Any
 
 from app.portfolio.tracker import PortfolioTracker
 from app.risk.circuit_breaker import BreakerState, CircuitBreaker
@@ -75,7 +74,6 @@ class RiskDecision:
     net_edge: float | None = None
     risk_metrics: dict[str, float] = field(default_factory=dict)
     breaker_state: str | None = None
-    extra: dict[str, Any] = field(default_factory=dict)
 
 
 class RiskEngine:
@@ -462,6 +460,7 @@ class RiskEngine:
             net_edge=net_edge,
             risk_metrics={
                 "equity": equity,
+                "entry_price": signal.implied_probability or 0.5,
                 "proposed_size": proposed_size,
                 "proposed_size_pct": (
                     (proposed_size / equity * 100) if equity > 0 else 0.0

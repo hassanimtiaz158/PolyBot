@@ -30,12 +30,13 @@ async def get_audit(
 ) -> PaginatedResponse[RiskEventResponse]:
     """Return a paginated audit trail from the database."""
     repo = RiskEventRepository(db)
-    items, total = await repo.list_paginated(
+    rows, total = await repo.list_paginated(
         limit=limit,
         offset=offset,
         event_type=event_type or None,
         severity=severity or None,
     )
+    items = [RiskEventResponse.model_validate(r) for r in rows]
     return PaginatedResponse(
         items=items,
         pagination=PaginationMeta(

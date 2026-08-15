@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 
 from app.audit.events import EventBus
+from app.backtesting.lifecycle import WalkForwardService
 from app.config.settings import settings
 from app.ev.costs import CostEstimator
 from app.ev.expected_value import ExpectedValueEngine
@@ -33,6 +35,7 @@ from app.storage.repositories import (
     PositionRepository,
     RiskEventRepository,
     SignalRepository,
+    SnapshotRepository,
 )
 from app.strategies.arbitrage import ArbitrageStrategy
 from app.strategies.ensemble import EnsembleStrategy
@@ -141,6 +144,19 @@ class Application:
             event_bus=self._event_bus,
         )
 
+        # ── Walk-forward validation service ────────────────────────
+        snapshot_repo = SnapshotRepository(db=db)
+        self._walk_forward = WalkForwardService(
+            snapshot_repo=snapshot_repo,
+            event_bus=self._event_bus,
+            interval_seconds=settings.walk_forward_interval_seconds,
+            enabled=settings.walk_forward_enabled,
+            train_size=settings.walk_forward_train_size,
+            val_size=settings.walk_forward_val_size,
+            windows=settings.walk_forward_windows,
+            fallback_synthetic=settings.walk_forward_fallback_synthetic,
+        )
+
         # Load persisted circuit breaker state
         await circuit_breaker.load_state()
 
@@ -177,6 +193,8 @@ class Application:
         logger.info("Shutting down")
         if self._orchestrator is not None:
             self._orchestrator.stop()
+        if self._walk_forward is not None:
+            self._walk_forward.stop()
         await db.close()
         if self._event_bus is not None:
             await self._event_bus.emit("SYSTEM_STOP", reason="application shutdown")
@@ -185,11 +203,17 @@ class Application:
     async def run(self) -> None:
         """Main entry point — runs the trading loop until interrupted."""
         await self.startup()
+        tasks: list[asyncio.Task[Any]] = []
         if self._orchestrator is not None:
-            try:
-                await self._orchestrator.run()
-            except Exception:
-                logger.exception("Orchestrator exited with error")
+            tasks.append(asyncio.create_task(self._orchestrator.run()))
+        if self._walk_forward is not None:
+            tasks.append(asyncio.create_task(self._walk_forward.run()))
+        try:
+            await asyncio.gather(*tasks)
+        except asyncio.CancelledError:
+            logger.info("Application cancelled")
+        except Exception as exc:
+            logger.exception("Application exited with error: %s", exc)
         await self.shutdown()
 
 

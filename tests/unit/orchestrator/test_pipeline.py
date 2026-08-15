@@ -264,4 +264,3 @@ class TestTradePipeline:
         assert result.risk_decision is None
         assert result.order_result is None
         assert result.error is None
-        assert result.extra == {}

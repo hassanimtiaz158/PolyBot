@@ -60,11 +60,3 @@ class ModeState:
     def is_live(self) -> bool:
         """Check if the mode allows real order submission."""
         return self._mode == OperatingMode.LIVE_GUARDED
-
-    def to_dict(self) -> dict[str, str]:
-        return {"mode": self._mode.value}
-
-    @classmethod
-    def from_dict(cls, data: dict[str, str]) -> "ModeState":
-        mode = OperatingMode(data.get("mode", "HALTED"))
-        return cls(initial_mode=mode)

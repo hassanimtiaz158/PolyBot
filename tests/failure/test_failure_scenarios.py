@@ -546,7 +546,7 @@ class TestDuplicateOrderHandling:
         count = await repo.count()
         assert count == 1
 
-    def test_paper_execution_idempotent(self) -> None:
+    async def test_paper_execution_idempotent(self) -> None:
         from app.execution.paper import PaperExecution
 
         adapter = PaperExecution(rejection_rate=0.0, seed=42)
@@ -557,10 +557,9 @@ class TestDuplicateOrderHandling:
             "size": 10,
             "price": 0.5,
         }
-        import asyncio
 
-        r1 = asyncio.get_event_loop().run_until_complete(adapter.submit(order))
-        r2 = asyncio.get_event_loop().run_until_complete(adapter.submit(order))
+        r1 = await adapter.submit(order)
+        r2 = await adapter.submit(order)
         assert r1["order_id"] == r2["order_id"]
         assert r1["status"] == r2["status"]
 
@@ -737,10 +736,6 @@ class TestCorruptedConfig:
     def test_negative_max_consecutive_losses_rejected(self) -> None:
         with pytest.raises(Exception):
             Settings(max_consecutive_losses=-1)
-
-    def test_negative_health_check_interval_rejected(self) -> None:
-        with pytest.raises(Exception):
-            Settings(health_check_interval_seconds=-1)
 
     def test_valid_settings_accepted(self) -> None:
         s = Settings(

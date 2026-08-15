@@ -12,7 +12,7 @@ Every stage transition is emitted as a structured audit event via the
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from app.audit.events import EventBus, default_bus
@@ -52,7 +52,6 @@ class PipelineResult:
     risk_decision: RiskDecision | None = None
     order_result: OrderResult | None = None
     error: str | None = None
-    extra: dict[str, Any] = field(default_factory=dict)
 
 
 class TradePipeline:

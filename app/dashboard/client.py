@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import random
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import httpx
 
@@ -34,7 +35,9 @@ class ApiClient:
         self._timeout = timeout
         self._transport = transport
 
-    def _get(self, path: str, params: dict[str, object] | None = None) -> dict:
+    def _get(
+        self, path: str, params: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
         try:
             with httpx.Client(transport=self._transport) as client:
@@ -45,17 +48,17 @@ class ApiClient:
             raise ApiError(
                 f"API error {resp.status_code} at {path}: {resp.text[:200]}"
             )
-        return resp.json()
+        return dict(resp.json())
 
-    def health(self) -> dict:
+    def health(self) -> dict[str, Any]:
         return self._get("/health")
 
-    def status(self) -> dict:
+    def status(self) -> dict[str, Any]:
         return self._get("/system/status")
 
     def markets(
         self, limit: int = 100, offset: int = 0, status: str | None = None
-    ) -> dict:
+    ) -> dict[str, Any]:
         params: dict[str, object] = {"limit": limit, "offset": offset}
         if status:
             params["status"] = status
@@ -68,7 +71,7 @@ class ApiClient:
         market_id: str | None = None,
         strategy: str | None = None,
         decision: str | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         params: dict[str, object] = {"limit": limit, "offset": offset}
         if market_id:
             params["market_id"] = market_id
@@ -84,7 +87,7 @@ class ApiClient:
         offset: int = 0,
         side: str | None = None,
         open_only: bool = True,
-    ) -> dict:
+    ) -> dict[str, Any]:
         params: dict[str, object] = {
             "limit": limit,
             "offset": offset,
@@ -100,7 +103,7 @@ class ApiClient:
         offset: int = 0,
         market_id: str | None = None,
         status: str | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         params: dict[str, object] = {"limit": limit, "offset": offset}
         if market_id:
             params["market_id"] = market_id
@@ -108,10 +111,10 @@ class ApiClient:
             params["status"] = status
         return self._get("/orders", params)
 
-    def risk(self, limit: int = 20, offset: int = 0) -> dict:
+    def risk(self, limit: int = 20, offset: int = 0) -> dict[str, Any]:
         return self._get("/risk", {"limit": limit, "offset": offset})
 
-    def performance(self) -> dict:
+    def performance(self) -> dict[str, Any]:
         return self._get("/performance")
 
     def audit(
@@ -120,7 +123,7 @@ class ApiClient:
         offset: int = 0,
         event_type: str | None = None,
         severity: str | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         params: dict[str, object] = {"limit": limit, "offset": offset}
         if event_type:
             params["event_type"] = event_type
@@ -146,7 +149,9 @@ class DemoProvider:
     def _ts(days_ago: float = 0.0) -> str:
         return (datetime.now(UTC) - timedelta(days=days_ago)).isoformat()
 
-    def markets(self, limit: int = 100, offset: int = 0, status: str | None = None) -> dict:
+    def markets(
+        self, limit: int = 100, offset: int = 0, status: str | None = None
+    ) -> dict[str, Any]:
         rows = [
             {
                 "market_id": "DEMO-ELEC-001",
@@ -218,7 +223,7 @@ class DemoProvider:
         market_id: str | None = None,
         strategy: str | None = None,
         decision: str | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         rows = [
             {
                 "signal_id": "sig_demo_001",
@@ -320,8 +325,8 @@ class DemoProvider:
         offset: int = 0,
         side: str | None = None,
         open_only: bool = True,
-    ) -> dict:
-        rows = [
+    ) -> dict[str, Any]:
+        rows: list[dict[str, Any]] = [
             {
                 "position_id": "pos_demo_001",
                 "market_id": "DEMO-ELEC-001",
@@ -386,7 +391,7 @@ class DemoProvider:
         offset: int = 0,
         market_id: str | None = None,
         status: str | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         rows = [
             {
                 "order_id": "ord_demo_001",
@@ -454,7 +459,7 @@ class DemoProvider:
             },
         }
 
-    def risk(self, limit: int = 20, offset: int = 0) -> dict:
+    def risk(self, limit: int = 20, offset: int = 0) -> dict[str, Any]:
         events = self.audit(limit=limit, offset=offset)
         return {
             "exposure": {
@@ -477,7 +482,7 @@ class DemoProvider:
             "events": events,
         }
 
-    def performance(self) -> dict:
+    def performance(self) -> dict[str, Any]:
         return {
             "total_realised_pnl": 1.42,
             "total_unrealised_pnl": 0.109,
@@ -490,7 +495,7 @@ class DemoProvider:
             "timestamp": self._ts(0),
         }
 
-    def equity_history(self) -> dict:
+    def equity_history(self) -> dict[str, Any]:
         """Synthetic equity curve for demo mode only (not provided by the API)."""
         return {
             "points": [
@@ -509,7 +514,7 @@ class DemoProvider:
         offset: int = 0,
         event_type: str | None = None,
         severity: str | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         rows = [
             {
                 "event_id": "evt_demo_001",
@@ -557,7 +562,7 @@ class DemoProvider:
             },
         }
 
-    def health(self) -> dict:
+    def health(self) -> dict[str, Any]:
         now = self._ts(0)
         return {
             "healthy": True,
@@ -570,7 +575,7 @@ class DemoProvider:
             "timestamp": now,
         }
 
-    def status(self) -> dict:
+    def status(self) -> dict[str, Any]:
         return {
             "mode": "DEMO",
             "trading_enabled": False,

@@ -199,7 +199,7 @@ class TestSystemStatus:
         assert isinstance(body["trading_enabled"], bool)
         assert isinstance(body["live_enabled"], bool)
         assert body["database_connected"] is True
-        assert body["schema_version"] == 2
+        assert body["schema_version"] == 3
         assert body["version"]
         assert body["timestamp"]
 

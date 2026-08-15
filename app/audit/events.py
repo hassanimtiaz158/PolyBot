@@ -56,6 +56,7 @@ EVENT_TYPES = frozenset({
     "KILL_SWITCH_RESUMED",
     "SYSTEM_START",
     "SYSTEM_STOP",
+    "WALK_FORWARD",
 })
 
 SEVERITIES: dict[str, str] = {

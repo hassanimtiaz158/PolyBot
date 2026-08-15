@@ -14,6 +14,8 @@ from typing import Any
 
 import httpx
 
+from app.data.retry import parse_retry_after
+
 logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────
@@ -84,20 +86,16 @@ class ClobAdapter:
         logger.warning("Unexpected /price response for token %s: %s", token_id, type(data))
         return {}
 
-    async def get_recent_trades(self, token_id: str, limit: int = 100) -> list[dict[str, Any]]:
-        """Fetch recent trades for a token. (Mimicked; no public endpoint.)"""
-        logger.debug("ClobAdapter.get_recent_trades called for %s (limit=%d)", token_id, limit)
-        return []
-
     async def health(self) -> bool:
         """Quick connectivity check — fetch a known-invalid token's book.
 
         A 404 on a bogus token id is acceptable — it means the API is
-        reachable.
+        reachable and responsive.  Only transport/timeout errors indicate
+        a connectivity problem.
         """
         try:
-            result = await self._request("GET", "/book", params={"token_id": "0xhealthcheck"})
-            return result is not None
+            await self._request("GET", "/book", params={"token_id": "0xhealthcheck"})
+            return True
         except Exception:
             return False
 
@@ -129,10 +127,10 @@ class ClobAdapter:
                     json=json,
                     timeout=DEFAULT_TIMEOUT,
                 )
-                self._last_request_time = asyncio.get_event_loop().time()
+                self._last_request_time = asyncio.get_running_loop().time()
 
                 if response.status_code == 429:
-                    retry_after = _parse_retry_after(response)
+                    retry_after = parse_retry_after(response)
                     logger.warning(
                         "Rate limited on %s, retrying after %.1fs (attempt %d/%d)",
                         path,
@@ -200,18 +198,7 @@ class ClobAdapter:
         return self._client
 
     async def _rate_limit_delay(self) -> None:
-        loop = asyncio.get_event_loop()
-        now = loop.time()
+        now = asyncio.get_running_loop().time()
         elapsed = now - self._last_request_time
         if elapsed < REQUEST_DELAY:
             await asyncio.sleep(REQUEST_DELAY - elapsed)
-
-
-def _parse_retry_after(response: httpx.Response) -> float:
-    val = response.headers.get("Retry-After")
-    if val is not None:
-        try:
-            return float(val)
-        except ValueError:
-            pass
-    return 5.0

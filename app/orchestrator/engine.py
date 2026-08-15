@@ -24,10 +24,6 @@ from app.risk.kill_switch import KILL_SWITCH_REASON, KillSwitch
 logger = logging.getLogger(__name__)
 
 
-class OrchestratorError(Exception):
-    """Base exception for orchestrator failures."""
-
-
 class Orchestrator:
     """Main trading loop that coordinates all subsystems.
 

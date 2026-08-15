@@ -21,15 +21,6 @@ from app.backtesting.engine import BacktestEngine
 from app.backtesting.models import MarketSnapshot
 from app.backtesting.report import ReportGenerator
 from app.strategies.microstructure import MicrostructureStrategy
-from app.storage.models import MarketSnapshot as StorageMarketSnapshot
-from app.risk.engine import RiskEngine
-from app.risk.limits import RiskLimits
-from app.risk.circuit_breaker import CircuitBreaker
-from app.risk.position_sizing import PositionSizer
-from app.portfolio.tracker import PortfolioTracker
-from app.ev.expected_value import ExpectedValueEngine
-from app.ev.costs import CostEstimator
-
 
 # ---------------------------------------------------------------------------
 # Extended snapshot with OBI/depth fields for synthetic data
@@ -121,7 +112,9 @@ def generate_synthetic_data(
         market_phases[mid] = rng.randint(0, market_periods[mid] - 1)
 
     # Build per-market snapshot lists first, then interleave.
-    per_market: dict[str, list[SyntheticSnapshot]] = {f"synth_{m+1:03d}": [] for m in range(num_markets)}
+    per_market: dict[str, list[SyntheticSnapshot]] = {
+        f"synth_{m+1:03d}": [] for m in range(num_markets)
+    }
 
     for m in range(num_markets):
         market_id = f"synth_{m + 1:03d}"
@@ -193,7 +186,7 @@ def main() -> None:
     snapshots = generate_synthetic_data(
         num_markets=20, num_snapshots=100, seed=42
     )
-    print(f"  Markets: 20  |  Snapshots per market: 100")
+    print("  Markets: 20  |  Snapshots per market: 100")
     print(f"  Total snapshots: {len(snapshots)}")
 
     # 2. Initialize and run backtest engine

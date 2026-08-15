@@ -23,9 +23,10 @@ async def list_markets(
 ) -> PaginatedResponse[MarketResponse]:
     """Return a paginated list of markets read from the database."""
     repo = MarketRepository(db)
-    items, total = await repo.list_paginated(
+    rows, total = await repo.list_paginated(
         limit=limit, offset=offset, status=status or None
     )
+    items = [MarketResponse.model_validate(r) for r in rows]
     return PaginatedResponse(
         items=items,
         pagination=PaginationMeta(

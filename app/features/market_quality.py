@@ -6,13 +6,11 @@ freshness into a single 0–1 score.
 
 from __future__ import annotations
 
-import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from app.features.orderbook import OrderBookFeatures
 from app.storage.models import MarketSnapshot
-
-logger = logging.getLogger(__name__)
 
 # Default weights (from PRD §7)
 DEFAULT_WEIGHTS: dict[str, float] = {
@@ -59,14 +57,9 @@ class MarketQuality:
         timestamp_str: str | None, max_age_seconds: int = 5
     ) -> bool:
         """``True`` if the data timestamp is recent enough."""
-        if timestamp_str is None:
-            return False
-        try:
-            ts = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
-            age = (datetime.now(UTC) - ts).total_seconds()
-            return age <= max_age_seconds
-        except (ValueError, TypeError):
-            return False
+        return OrderBookFeatures.data_freshness(
+            timestamp_str, max_age_seconds=max_age_seconds
+        )
 
     @staticmethod
     def spread_quality(spread: float | None) -> float:

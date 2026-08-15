@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import streamlit as st
 
 from app.dashboard.client import ApiClient, ApiError, DemoProvider
@@ -20,12 +22,18 @@ class DashboardSession:
         self.demo = demo
         self.offline = offline
 
-    def fetch(self, method: str, default: object = None, **kwargs: object) -> object:
+    def fetch(
+        self,
+        method: str,
+        default: dict[str, Any] | None = None,
+        **kwargs: object,
+    ) -> dict[str, Any] | None:
         """Call a data method, returning ``default`` when unavailable."""
         if self.offline:
             return default
         try:
-            return getattr(self.client, method)(**kwargs)
+            result = getattr(self.client, method)(**kwargs)
+            return result if isinstance(result, dict) else default
         except (ApiError, AttributeError):
             return default
 
@@ -48,44 +56,35 @@ def build_session() -> DashboardSession:
 
 def get_dashboard() -> DashboardSession:
     """Return the session stored by the entry point."""
-    return st.session_state["dash_session"]
+    return cast(DashboardSession, st.session_state["dash_session"])
 
 
 def fmt_money(value: object, signed: bool = False) -> str:
     """Format a number as currency; unknown values render as an em dash."""
-    if value is None or isinstance(value, str):
+    if value is None or not isinstance(value, (int, float)):
         return "—"
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return "—"
+    number = float(value)
     sign = "+" if signed and number > 0 else ""
     return f"{sign}${number:,.2f}"
 
 
 def fmt_pct(value: object, signed: bool = False) -> str:
     """Format a 0–1 probability or edge as a percentage."""
-    if value is None or isinstance(value, str):
+    if value is None or not isinstance(value, (int, float)):
         return "—"
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return "—"
+    number = float(value)
     sign = "+" if signed and number > 0 else ""
     return f"{sign}{number * 100:.1f}%"
 
 
 def fmt_price(value: object) -> str:
     """Format a 0–1 price with three decimals."""
-    if value is None or isinstance(value, str):
+    if value is None or not isinstance(value, (int, float)):
         return "—"
-    try:
-        return f"{float(value):.3f}"
-    except (TypeError, ValueError):
-        return "—"
+    return f"{float(value):.3f}"
 
 
-def is_healthy(check: dict) -> bool:
+def is_healthy(check: dict[str, object] | None) -> bool:
     """Return True when a health-check payload reports healthy."""
     if not isinstance(check, dict):
         return False

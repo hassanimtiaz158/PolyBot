@@ -29,7 +29,7 @@ if session.offline:
 elif not items:
     st.info("No signals recorded.")
 
-decisions = {}
+decisions: dict[str, int] = {}
 for s in items:
     decisions[str(s.get("decision", "PENDING"))] = (
         decisions.get(str(s.get("decision", "PENDING")), 0) + 1

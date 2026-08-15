@@ -14,7 +14,7 @@ from app.config.settings import settings
 logger = logging.getLogger(__name__)
 
 # ── Schema version tracking ────────────────────────────────────────
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA_SQL = """
 -- Version 1: core tables

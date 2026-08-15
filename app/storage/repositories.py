@@ -251,6 +251,15 @@ class SnapshotRepository:
         row = await cursor.fetchone()
         return str(row[0]) if row and row[0] is not None else None
 
+    async def list_recent(self, limit: int, offset: int = 0) -> list[MarketSnapshot]:
+        """Return the most recent snapshots across all markets, sorted by timestamp descending."""
+        cursor = await self._db.conn.execute(
+            "SELECT * FROM market_snapshots ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        )
+        rows = await cursor.fetchall()
+        return [MarketSnapshot.from_row(dict(r)) for r in rows]
+
 
 # ── SignalRepository ────────────────────────────────────────────────
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import html
+
 import streamlit as st
 
 from app.dashboard.common import OFFLINE_MODE
@@ -141,7 +143,10 @@ def render_kill_switch(status: object) -> None:
         return
     if str(ks.get("state")).upper() != "KILLED":
         return
-    reason = str(ks.get("reason") or "MANUAL EMERGENCY STOP")
+    raw_reason = str(ks.get("reason") or "MANUAL EMERGENCY STOP")
+    # Sanitize to prevent XSS — the reason comes from the kill switch
+    # state which is set by an operator with the control key.
+    reason = html.escape(raw_reason)
     _inject_css()
     st.markdown(
         '<div class="dash-banner alert" style="--accent:#7f1d1d">'

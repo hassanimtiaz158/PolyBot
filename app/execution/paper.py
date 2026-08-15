@@ -190,8 +190,8 @@ class PaperExecution(ExecutionAdapter):
         effective_fill = max(0.01, min(0.99, effective_fill))
 
         # ── Price impact ────────────────────────────────────────────
-        if fill_ratio > 1.0:
-            impact = self._price_impact_pct * (fill_ratio - 1.0) * price
+        if ratio > 1.0:
+            impact = self._price_impact_pct * (ratio - 1.0) * price
             if side == "YES":
                 self._market_prices[market_id] += impact
             else:

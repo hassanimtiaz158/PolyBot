@@ -29,13 +29,14 @@ async def list_signals(
 ) -> PaginatedResponse[SignalResponse]:
     """Return a paginated list of strategy signals from the database."""
     repo = SignalRepository(db)
-    items, total = await repo.list_paginated(
+    rows, total = await repo.list_paginated(
         limit=limit,
         offset=offset,
         market_id=market_id or None,
         strategy=strategy or None,
         decision=decision or None,
     )
+    items = [SignalResponse.model_validate(r) for r in rows]
     return PaginatedResponse(
         items=items,
         pagination=PaginationMeta(

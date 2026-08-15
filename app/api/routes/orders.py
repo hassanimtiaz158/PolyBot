@@ -26,12 +26,13 @@ async def list_orders(
 ) -> PaginatedResponse[OrderResponse]:
     """Return a paginated list of orders from the database."""
     repo = OrderRepository(db)
-    items, total = await repo.list_paginated(
+    rows, total = await repo.list_paginated(
         limit=limit,
         offset=offset,
         market_id=market_id or None,
         status=status or None,
     )
+    items = [OrderResponse.model_validate(r) for r in rows]
     return PaginatedResponse(
         items=items,
         pagination=PaginationMeta(

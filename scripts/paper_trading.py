@@ -14,7 +14,6 @@ import asyncio
 import json
 import logging
 import sys
-import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -22,19 +21,18 @@ from typing import Any
 # ── Setup paths ────────────────────────────────────────────────────
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.audit.events import EventBus, default_bus
+from app.audit.events import default_bus
 from app.config.settings import settings
 from app.data.clob import ClobAdapter
 from app.data.gamma import GammaAdapter
 from app.data.normalizer import DataNormalizer
-from app.data.validators import DataValidator, DataQuality
+from app.data.validators import DataQuality, DataValidator
 from app.ev.expected_value import ExpectedValueEngine
 from app.execution.engine import ExecutionEngine
 from app.execution.paper import PaperExecution
 from app.features.liquidity import LiquidityFeatures
 from app.features.orderbook import OrderBookFeatures
 from app.modes.state import ModeState, OperatingMode
-from app.monitoring.health import health_status, run_all_checks
 from app.orchestrator.engine import Orchestrator
 from app.orchestrator.pipeline import PipelineResult
 from app.portfolio.tracker import PortfolioTracker
@@ -91,7 +89,6 @@ class MetricsCollector:
         if hasattr(signal, "confidence") and signal.confidence is not None:
             self.model_confidences.append(signal.confidence)
         if hasattr(signal, "reason") and signal.reason:
-            reason = signal.reason
             if "rejected" in str(getattr(signal, "decision", "")).lower() or \
                getattr(signal, "decision", None) is not None:
                 pass  # count below
@@ -332,7 +329,11 @@ class MetricsTradePipeline:
         try:
             price = features.get("midpoint", signal.implied_probability or 0.5)
             spread = features.get("absolute_spread") or features.get("spread") or 0.0
-            depth = features.get("total_depth") or features.get("bid_depth", 0) or self._nominal_size
+            depth = (
+                features.get("total_depth")
+                or features.get("bid_depth", 0)
+                or self._nominal_size
+            )
 
             ev_result = self._ev.evaluate(
                 model_probability=signal.model_probability or 0.5,
@@ -556,7 +557,13 @@ def generate_reports(
     # Profit factor
     gross_profit = sum(1 - f["price"] for f in metrics.fills if f.get("price", 0.5) < 0.5)
     gross_loss = sum(f["price"] for f in metrics.fills if f.get("price", 0.5) >= 0.5)
-    profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else float("inf") if gross_profit > 0 else 0.0
+    profit_factor = (
+        (gross_profit / gross_loss)
+        if gross_loss > 0
+        else float("inf")
+        if gross_profit > 0
+        else 0.0
+    )
 
     # Slippage
     avg_slippage = sum(metrics.slippages) / len(metrics.slippages) if metrics.slippages else 0.0
@@ -566,7 +573,11 @@ def generate_reports(
     avg_net_edge = sum(metrics.edges) / len(metrics.edges) if metrics.edges else 0.0
 
     # Confidence
-    avg_confidence = sum(metrics.model_confidences) / len(metrics.model_confidences) if metrics.model_confidences else 0.0
+    avg_confidence = (
+        sum(metrics.model_confidences) / len(metrics.model_confidences)
+        if metrics.model_confidences
+        else 0.0
+    )
 
     # ── JSON metrics ───────────────────────────────────────────────
     metrics_data = {
@@ -643,8 +654,8 @@ def generate_reports(
         "",
         "## Summary",
         "",
-        f"| Metric | Value |",
-        f"|--------|-------|",
+        "| Metric | Value |",
+        "|--------|-------|",
         f"| Initial Equity | ${initial_equity:,.2f} |",
         f"| Final Equity | ${final_equity:,.2f} |",
         f"| Net P&L | ${net_pnl:,.2f} ({net_pnl_pct:+.2f}%) |",
@@ -853,7 +864,7 @@ async def run_paper_trading() -> None:
     mode_state = ModeState(OperatingMode.PAPER)
 
     # Orchestrator
-    orch = Orchestrator(
+    Orchestrator(
         router=router,
         breaker=breaker,
         mode=mode_state,

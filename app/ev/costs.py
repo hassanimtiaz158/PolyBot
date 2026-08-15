@@ -17,10 +17,6 @@ Per-share fee = ``Θ × p × (1-p)`` — symmetric around ``p=0.50``.
 
 from __future__ import annotations
 
-import logging
-
-logger = logging.getLogger(__name__)
-
 # Default fee coefficient (Θ) for "Other/General" category.
 DEFAULT_FEE_RATE = 0.05
 

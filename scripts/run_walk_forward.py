@@ -17,7 +17,6 @@ import argparse
 import asyncio
 import os
 import sys
-import time
 
 # Ensure project root is on the path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -48,8 +47,8 @@ def main() -> None:
     print("=" * 60)
     print("POLYBOT WALK-FORWARD VALIDATION")
     print("=" * 60)
-    print(f"  Strategy:          MicrostructureStrategy")
-    print(f"  Mode:              expanding")
+    print("  Strategy:          MicrostructureStrategy")
+    print("  Mode:              expanding")
     print(f"  Train size:        {train_size} snapshots")
     print(f"  Validation size:   {val_size} snapshots")
     print(f"  Windows:           {args.windows}")
@@ -104,7 +103,8 @@ def main() -> None:
     print("  Regime sensitive:     " + str(d.regime_sensitive))
     print("  Degradation:          " + str(d.degradation))
     print("  Single-period luck:   " + str(d.single_period_luck))
-    print("  Detector codes:       " + ",".join(d.codes) if d.codes else "  Detector codes:       (none)")
+    codes_str = ",".join(d.codes) if d.codes else "(none)"
+    print(f"  Detector codes:       {codes_str}")
     for reason in d.reasons:
         print("    - " + reason)
     print()

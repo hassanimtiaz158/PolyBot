@@ -27,7 +27,6 @@ class Settings(BaseSettings):
     poly_api_key: str | None = None
     poly_secret: str | None = None
     poly_passphrase: str | None = None
-    poly_rpc_url: str | None = None
 
     # ── Emergency control interface ─────────────────────────────────
     # Dedicated secret for the writable /api/control/* endpoints
@@ -41,7 +40,6 @@ class Settings(BaseSettings):
 
     # ── Logging ─────────────────────────────────────────────────────
     log_level: str = "INFO"
-    log_format: str = "structured"
 
     # ── Risk limits (conservative defaults — all non-negative) ─────
     max_position_pct: float = Field(default=0.01, ge=0.0, le=1.0)
@@ -65,8 +63,15 @@ class Settings(BaseSettings):
     # ── Data collection ─────────────────────────────────────────────
     market_scan_interval_seconds: int = Field(default=300, ge=1)
 
+    # ── Walk-forward validation ───────────────────────────────────
+    walk_forward_enabled: bool = True
+    walk_forward_interval_seconds: int = Field(default=86_400, ge=60)
+    walk_forward_train_size: int = Field(default=1500, ge=1)
+    walk_forward_val_size: int = Field(default=500, ge=1)
+    walk_forward_windows: int = Field(default=10, ge=1)
+    walk_forward_fallback_synthetic: bool = True
+
     # ── Monitoring ──────────────────────────────────────────────────
-    health_check_interval_seconds: int = Field(default=30, ge=1)
 
     # ── Real-time dashboard ─────────────────────────────────────────
     # How often the server-side change detector probes the database for
@@ -80,6 +85,9 @@ class Settings(BaseSettings):
     alert_min_interval_seconds: float = Field(default=60.0, ge=0.0)
     alert_repeat_threshold: int = Field(default=5, ge=1)
     alert_repeat_window_seconds: float = Field(default=300.0, ge=1.0)
+
+    # ── API Security ─────────────────────────────────────────────────
+    cors_allow_origins: str = ""
 
     model_config = {
         "env_file": ".env",

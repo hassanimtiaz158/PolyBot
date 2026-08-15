@@ -31,7 +31,6 @@ Attack vectors tested:
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -594,7 +593,7 @@ class TestAttack_Duplicate_Order:
         count = await repo.count()
         assert count == 1
 
-    def test_paper_execution_idempotent(self):
+    async def test_paper_execution_idempotent(self):
         adapter = PaperExecution(rejection_rate=0.0, seed=42)
         order = {
             "order_id": "idem_001",
@@ -603,8 +602,8 @@ class TestAttack_Duplicate_Order:
             "size": 10,
             "price": 0.5,
         }
-        r1 = asyncio.get_event_loop().run_until_complete(adapter.submit(order))
-        r2 = asyncio.get_event_loop().run_until_complete(adapter.submit(order))
+        r1 = await adapter.submit(order)
+        r2 = await adapter.submit(order)
         # Same result returned
         assert r1["order_id"] == r2["order_id"]
         assert r1["status"] == r2["status"]
@@ -675,17 +674,15 @@ class TestAttack_Unknown_Order_Status:
         # PnL should not change
         assert orch._daily_pnl == 0.0
 
-    def test_paper_execution_handles_unknown_side(self):
+    async def test_paper_execution_handles_unknown_side(self):
         adapter = PaperExecution(rejection_rate=0.0, seed=42)
-        result = asyncio.get_event_loop().run_until_complete(
-            adapter.submit({
-                "order_id": "unk_001",
-                "market_id": "mkt",
-                "side": "INVALID",
-                "size": 10,
-                "price": 0.5,
-            })
-        )
+        result = await adapter.submit({
+            "order_id": "unk_001",
+            "market_id": "mkt",
+            "side": "INVALID",
+            "size": 10,
+            "price": 0.5,
+        })
         assert result["status"] == "REJECTED"
 
 

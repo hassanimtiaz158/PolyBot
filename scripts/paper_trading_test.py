@@ -9,38 +9,28 @@ import asyncio
 import json
 import logging
 import sys
-import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.audit.events import EventBus, default_bus
-from app.config.settings import settings
 from app.data.clob import ClobAdapter
 from app.data.gamma import GammaAdapter
 from app.data.normalizer import DataNormalizer
-from app.data.validators import DataValidator, DataQuality
+from app.data.validators import DataQuality, DataValidator
 from app.ev.expected_value import ExpectedValueEngine
 from app.execution.engine import ExecutionEngine
 from app.execution.paper import PaperExecution
 from app.features.liquidity import LiquidityFeatures
 from app.features.orderbook import OrderBookFeatures
 from app.modes.state import ModeState, OperatingMode
-from app.orchestrator.engine import Orchestrator
 from app.orchestrator.pipeline import PipelineResult
 from app.portfolio.tracker import PortfolioTracker
 from app.risk.circuit_breaker import CircuitBreaker
 from app.risk.engine import RiskEngine
 from app.risk.limits import RiskLimits
 from app.risk.position_sizing import PositionSizer
-from app.storage.repositories import (
-    OrderRepository,
-    PositionRepository,
-    RiskEventRepository,
-    SignalRepository,
-)
 from app.strategies.microstructure import MicrostructureStrategy
 
 logging.basicConfig(
@@ -128,7 +118,11 @@ async def make_provider(m: Metrics) -> Any:
                 snap = norm.normalize_snapshot(mid, book)
                 qr = val.check_snapshot(snap)
                 if qr.quality != DataQuality.HEALTHY:
-                    logger.warning("Snapshot %s quality=%s reason=%s snap=%s", mid[:8], qr.quality.value, qr.reason, {k: v for k, v in snap.items() if k != 'volume'})
+                    logger.warning(
+                        "Snapshot %s quality=%s reason=%s snap=%s",
+                        mid[:8], qr.quality.value, qr.reason,
+                        {k: v for k, v in snap.items() if k != 'volume'},
+                    )
                     continue
 
                 ob = obf.compute(snap, bids=book.get("bids"), asks=book.get("asks"))
@@ -263,7 +257,6 @@ def write_reports(m: Metrics, portfolio: PortfolioTracker) -> None:
             max_dd_pct = dd / peak * 100 if peak else 0
 
     wins = sum(1 for f in m.fills if f.get("price", 0.5) < 0.5)
-    losses = len(m.fills) - wins
     hit_rate = wins / len(m.fills) * 100 if m.fills else 0
     avg_slip = sum(m.slippages) / len(m.slippages) if m.slippages else 0
     avg_edge = sum(m.edges) / len(m.edges) if m.edges else 0
@@ -432,7 +425,6 @@ async def main() -> None:
     )
 
     provider = await make_provider(m)
-    mode = ModeState(OperatingMode.PAPER)
 
     for i in range(1, NUM_ITERATIONS + 1):
         logger.info("--- Iteration %d/%d ---", i, NUM_ITERATIONS)

@@ -9,6 +9,7 @@ from app.api.models import (
     ExposureSummary,
     PaginatedResponse,
     PaginationMeta,
+    RiskEventResponse,
     RiskResponse,
 )
 from app.config.settings import settings
@@ -46,9 +47,10 @@ async def get_risk(
     event_repo = RiskEventRepository(db)
     total_exposure = await position_repo.total_exposure()
     open_positions = await position_repo.count(open_only=True)
-    events, event_total = await event_repo.list_paginated(
+    raw_events, event_total = await event_repo.list_paginated(
         limit=limit, offset=offset
     )
+    events = [RiskEventResponse.model_validate(e) for e in raw_events]
     return RiskResponse(
         exposure=ExposureSummary(
             total_exposure=total_exposure, open_positions=open_positions

@@ -12,7 +12,6 @@ import asyncio
 import json
 import logging
 import sys
-from typing import Any
 
 from app.backtesting.engine import BacktestEngine
 from app.backtesting.models import MarketSnapshot
@@ -99,7 +98,6 @@ def load_snapshots(data_path: str) -> list[MarketSnapshot]:
 def _make_level_strategy():
     """Create a simple price-level strategy for the CLI."""
     from app.strategies.base import Strategy
-    from app.strategies.base import StrategyDecision
 
     class LevelStrategy(Strategy):
         name = "level"

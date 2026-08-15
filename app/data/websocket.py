@@ -73,6 +73,7 @@ class WebSocketManager:
         self._ws: Any = None  # websockets.WebSocketClientProtocol
         self._listen_task: asyncio.Task[None] | None = None
         self._ping_task: asyncio.Task[None] | None = None
+        self._dispatch_tasks: set[asyncio.Task[None]] = set()
         self._subscribed_markets: list[str] = []
         self._last_message_time: float = 0.0
         self._reconnect_attempt = 0
@@ -134,12 +135,22 @@ class WebSocketManager:
         """Gracefully close the WebSocket connection."""
         self._state = ConnectionState.DISCONNECTED
 
-        # Cancel background tasks
+        # Cancel and fully unwind background tasks so no new event
+        # dispatches are queued before we drain the in-flight ones.
         for task in (self._listen_task, self._ping_task):
             if task is not None and not task.done():
                 task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
         self._listen_task = None
         self._ping_task = None
+
+        # Drain in-flight dispatch tasks so no callback coroutine leaks
+        if self._dispatch_tasks:
+            await asyncio.gather(*self._dispatch_tasks, return_exceptions=True)
+            self._dispatch_tasks.clear()
 
         if self._ws is not None:
             try:
@@ -186,7 +197,7 @@ class WebSocketManager:
                 max_size=2**20,  # 1 MB
             )
             self._state = ConnectionState.CONNECTED
-            self._last_message_time = asyncio.get_event_loop().time()
+            self._last_message_time = asyncio.get_running_loop().time()
             self._reconnect_attempt = 0
 
             logger.info("WebSocket connected to %s", WS_MARKET_URL)
@@ -251,7 +262,7 @@ class WebSocketManager:
                 raw_msg = await asyncio.wait_for(
                     self._ws.recv(), timeout=MESSAGE_TIMEOUT
                 )
-                self._last_message_time = asyncio.get_event_loop().time()
+                self._last_message_time = asyncio.get_running_loop().time()
                 self._handle_raw_message(raw_msg)
 
             except TimeoutError:
@@ -292,7 +303,9 @@ class WebSocketManager:
 
         event = self._build_event(data)
         if event is not None:
-            asyncio.create_task(self._dispatch(event))
+            task = asyncio.create_task(self._dispatch(event))
+            self._dispatch_tasks.add(task)
+            task.add_done_callback(self._dispatch_tasks.discard)
 
     @staticmethod
     def _build_event(data: dict[str, Any]) -> MarketEvent | None:

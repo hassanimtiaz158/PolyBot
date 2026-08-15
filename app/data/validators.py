@@ -62,7 +62,6 @@ class QualityReport:
 
 REQUIRED_MARKET_FIELDS: set[str] = {"market_id", "question", "condition_id"}
 REQUIRED_SNAPSHOT_FIELDS: set[str] = {"market_id", "bid", "ask", "timestamp"}
-REQUIRED_SNAPSHOT_MIDPOINT_ASK: set[str] = {"midpoint", "spread"}
 
 # Prices must be within [0, 1] — they are probabilities
 VALID_PRICE_RANGE: tuple[float, float] = (0.0, 1.0)

@@ -92,13 +92,6 @@ class DataNormalizer:
             "time_to_resolution": None,
         }
 
-    @staticmethod
-    def normalize_snapshots(
-        market_id: str, raw_list: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        """Batch-normalise a list of CLOB order-book responses (rare, single-market)."""
-        return [DataNormalizer.normalize_snapshot(market_id, r) for r in raw_list]
-
     # ── Extras ──────────────────────────────────────────────────────
 
     @staticmethod

@@ -28,9 +28,10 @@ async def list_positions(
 ) -> PaginatedResponse[PositionResponse]:
     """Return a paginated list of positions from the database."""
     repo = PositionRepository(db)
-    items, total = await repo.list_paginated(
+    rows, total = await repo.list_paginated(
         limit=limit, offset=offset, side=side or None, open_only=open_only
     )
+    items = [PositionResponse.model_validate(r) for r in rows]
     return PaginatedResponse(
         items=items,
         pagination=PaginationMeta(
