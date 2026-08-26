@@ -189,4 +189,12 @@ class LiveDataFeed:
             **ob_features,
             **liq_features,
         }
+        # RiskLimits.check_liquidity compares this key against
+        # settings.min_liquidity (a raw depth/dollar threshold, e.g.
+        # 1000), NOT a 0-1 score -- despite the key's name.
+        # app/backtesting/engine.py documents and relies on this exact
+        # convention ("liquidity_score is set to the raw depth"). Override
+        # LiquidityFeatures' own 0-1 liquidity_score, which would always
+        # fail that threshold.
+        features["liquidity_score"] = liq_features.get("total_depth")
         return market_id, features
