@@ -53,10 +53,17 @@ breaker_triggered = str(breaker.get("triggered_at", "—")) if breaker else "—
 st.divider()
 st.subheader("Circuit breaker")
 
-if breaker_state != "NOT_TRIPPED":
-    st.error("Circuit breaker is tripped — no new orders will be submitted.")
+if breaker_state == "HALTED":
+    st.error("Circuit breaker is HALTED — no new orders will be submitted.")
+elif breaker_state == "WARNING":
+    st.warning(
+        f"Circuit breaker is in WARNING state ({breaker_reasons}) — "
+        "trading continues, but this should be investigated."
+    )
+elif breaker_state == "NORMAL":
+    st.success("Circuit breaker is NORMAL.")
 else:
-    st.success("Circuit breaker not tripped.")
+    st.info("Circuit breaker state unavailable.")
 st.dataframe(
     [
         {

@@ -181,6 +181,11 @@ class LiveDataFeed:
             "token_id": token_id,
             "bid": snapshot["bid"],
             "ask": snapshot["ask"],
+            # RiskLimits.check_data_validity/check_spread and the EV
+            # pipeline stage read the generic "spread" key (same
+            # convention used by app/backtesting -- see
+            # BacktestEngine._build_features), not "absolute_spread".
+            "spread": snapshot["spread"],
             **ob_features,
             **liq_features,
         }

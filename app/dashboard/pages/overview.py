@@ -68,7 +68,12 @@ markets = session.fetch("markets") or {}
 active_signals = signals.get("items", []) if isinstance(signals, dict) else []
 open_positions = positions.get("items", []) if isinstance(positions, dict) else []
 eligible_markets = (
-    sum(1 for m in markets.get("items", []) if m.get("eligible"))
+    # Every persisted market already passed the eligibility scorer before
+    # the scanner ever stores it (see app/discovery/scanner.py) -- there
+    # is no separate "eligible" field in the API response to filter on.
+    # Use the response's own pagination total, not len(items), since
+    # /markets is paginated and this page only fetches one page.
+    markets.get("pagination", {}).get("total", len(markets.get("items", [])))
     if isinstance(markets, dict)
     else 0
 )

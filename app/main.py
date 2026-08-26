@@ -20,7 +20,7 @@ from app.execution.engine import ExecutionEngine
 from app.execution.paper import PaperExecution
 from app.execution.polymarket import PolymarketExecution
 from app.modes.state import ModeState, OperatingMode
-from app.monitoring.health import health_status, run_all_checks
+from app.monitoring.health import checks, health_status, run_all_checks
 from app.orchestrator.data_feed import LiveDataFeed
 from app.orchestrator.engine import Orchestrator
 from app.orchestrator.pipeline import TradePipeline
@@ -164,11 +164,33 @@ class Application:
         # ── Router ───────────────────────────────────────────────────
         router = SignalRouter(pipeline=pipeline, mode=self.mode_mode)
 
-        # Register strategies
-        router.register_strategy("microstructure", MicrostructureStrategy(), enabled=True)
-        router.register_strategy("arbitrage", ArbitrageStrategy(), enabled=True)
+        # Register strategies. max_data_age_seconds defaults to a
+        # hardcoded 5s in each Strategy subclass, independent of
+        # settings.data_max_age_seconds -- must be passed explicitly or
+        # a data feed with a longer (but still legitimate) polling
+        # cadence than 5s will have every signal rejected as stale.
+        router.register_strategy(
+            "microstructure",
+            MicrostructureStrategy(max_data_age_seconds=settings.data_max_age_seconds),
+            enabled=True,
+        )
+        router.register_strategy(
+            "arbitrage",
+            ArbitrageStrategy(max_data_age_seconds=settings.data_max_age_seconds),
+            enabled=True,
+        )
         router.register_strategy("probability", ProbabilityStrategy(), enabled=False)
         router.register_strategy("ensemble", EnsembleStrategy(), enabled=False)
+
+        # RiskEngine unconditionally requires the "model_availability"
+        # health check to pass for every signal, regardless of strategy.
+        # The currently-enabled strategies (microstructure, arbitrage) are
+        # pure order-book heuristics with no trained model dependency, so
+        # this must be satisfied for them or every trade is rejected with
+        # MODEL_UNAVAILABLE forever. When probability/ensemble strategies
+        # are enabled, a real trained model must be loaded and registered
+        # here instead.
+        checks["model_availability"].register_model("heuristic-strategies")
 
         # ── Live data feed ──────────────────────────────────────────
         # Fetches CLOB order books for every scanner-discovered market,

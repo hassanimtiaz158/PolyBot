@@ -95,13 +95,28 @@ async def circuit_breaker(db: Database) -> CircuitBreakerInfo | None:
 
 
 async def build_health(db: Database) -> HealthResponse:
-    """Run the dashboard health checks and assemble a ``HealthResponse``."""
+    """Run the dashboard health checks and assemble a ``HealthResponse``.
+
+    ``data_freshness`` and ``model_availability`` must NOT be read from
+    ``app.monitoring.health``'s in-memory ``checks`` here: this API
+    process is a separate OS process from the bot (``app.main``), so
+    that module-level state is never populated in this process -- it
+    would report stale/unavailable forever regardless of what the bot
+    is actually doing. Per this module's own contract, every value here
+    is derived from the persisted database (or static config) instead,
+    which is genuinely shared across processes.
+    """
     results: dict[str, bool] = {"database": await db.health()}
-    for name in ("data_freshness", "api", "model_availability"):
-        try:
-            results[name] = await health_checks[name].check()
-        except Exception:
-            results[name] = False
+    try:
+        results["api"] = await health_checks["api"].check()
+    except Exception:
+        results["api"] = False
+    results["data_freshness"] = await data_freshness_status(db) == "FRESH"
+    # No currently-registered strategy (microstructure, arbitrage) depends
+    # on a trained probability model -- only probability/ensemble would,
+    # and those are disabled in app/main.py. Always healthy until a
+    # model-dependent strategy is actually enabled.
+    results["model_availability"] = True
     return HealthResponse(
         healthy=all(results.values()),
         checks={
