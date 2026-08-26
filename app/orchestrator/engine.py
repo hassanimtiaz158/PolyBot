@@ -15,7 +15,7 @@ from typing import Any
 from app.audit.events import EventBus, default_bus
 from app.config.settings import settings
 from app.modes.state import ModeState, OperatingMode
-from app.monitoring.health import health_status, run_all_checks
+from app.monitoring.health import checks, health_status, run_all_checks
 from app.orchestrator.pipeline import PipelineResult
 from app.orchestrator.router import SignalRouter
 from app.risk.circuit_breaker import BreakerState, CircuitBreaker
@@ -189,6 +189,13 @@ class Orchestrator:
                     reason=f"data provider error: {exc}",
                 )
                 return
+
+        # Re-run the freshness check now, after data_provider() has had a
+        # chance to call record_data(). The flag from run_all_checks() at
+        # the top of this iteration reflects the *previous* cycle's data
+        # and would report stale on every single iteration even when
+        # this iteration's fetch just succeeded moments ago.
+        await checks["data_freshness"].check()
 
         # Emit stale data event if data freshness check failed
         # (skip if already halted to avoid redundant alerts)

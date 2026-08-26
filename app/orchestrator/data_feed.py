@@ -13,6 +13,7 @@ eligible markets exist.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -28,6 +29,14 @@ from app.storage.models import MarketSnapshot
 from app.storage.repositories import MarketRepository, SnapshotRepository
 
 logger = logging.getLogger(__name__)
+
+# Bounded concurrency for order-book fetches. Fetching sequentially (one
+# request at a time) for a full market list takes far longer than the
+# default 5s data-freshness window, so by the time later markets are
+# evaluated their snapshot is already stale and no signal is ever
+# produced for them. Fetching concurrently keeps the whole batch's
+# wall-clock spread well inside the freshness window.
+MAX_CONCURRENT_FETCHES = 15
 
 
 class LiveDataFeed:
@@ -92,60 +101,21 @@ class LiveDataFeed:
             if market_id in eligible_ids:
                 token_map[market_id] = DataNormalizer.extract_token_ids(raw)
 
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_FETCHES)
+        results = await asyncio.gather(
+            *(
+                self._fetch_one(market_id, token_ids[0], semaphore)
+                for market_id, token_ids in token_map.items()
+                if token_ids
+            )
+        )
+
         features_by_market: dict[str, dict[str, Any]] = {}
-        any_healthy = False
+        for market_id, features in results:
+            if features is not None:
+                features_by_market[market_id] = features
 
-        for market_id, token_ids in token_map.items():
-            if not token_ids:
-                continue
-            # First outcome token (YES side) drives the book for this market.
-            token_id = token_ids[0]
-
-            try:
-                book = await self._clob.get_order_book(token_id)
-            except Exception:
-                logger.exception(
-                    "LiveDataFeed: order-book fetch failed for %s", market_id
-                )
-                continue
-            if not book:
-                continue
-
-            snapshot = DataNormalizer.normalize_snapshot(market_id, book)
-            if not snapshot.get("timestamp"):
-                snapshot["timestamp"] = datetime.now(UTC).isoformat()
-
-            report = self._validator.check_snapshot(snapshot)
-            if report.quality != DataQuality.HEALTHY:
-                logger.debug(
-                    "LiveDataFeed: skipping %s -- %s (%s)",
-                    market_id,
-                    report.quality.value,
-                    report.reason,
-                )
-                continue
-
-            try:
-                await self._snapshot_repo.insert(MarketSnapshot.from_row(snapshot))
-            except Exception:
-                logger.exception(
-                    "LiveDataFeed: failed to persist snapshot for %s", market_id
-                )
-
-            ob_features = OrderBookFeatures().compute(snapshot)
-            liq_features = LiquidityFeatures().compute(snapshot)
-
-            features_by_market[market_id] = {
-                "market_id": market_id,
-                "token_id": token_id,
-                "bid": snapshot["bid"],
-                "ask": snapshot["ask"],
-                **ob_features,
-                **liq_features,
-            }
-            any_healthy = True
-
-        if any_healthy:
+        if features_by_market:
             checks["data_freshness"].record_data()
 
         logger.info(
@@ -158,3 +128,60 @@ class LiveDataFeed:
     async def close(self) -> None:
         """Release the underlying HTTP clients."""
         await self._clob.close()
+
+    # -- Internal ----------------------------------------------------
+
+    async def _fetch_one(
+        self, market_id: str, token_id: str, semaphore: asyncio.Semaphore
+    ) -> tuple[str, dict[str, Any] | None]:
+        """Fetch, validate, persist, and featurise one market's order book.
+
+        Returns ``(market_id, None)`` for any failure or quality-gate
+        rejection -- callers filter those out. Bounded by ``semaphore``
+        so a large market list is fetched concurrently instead of one
+        request at a time (see ``MAX_CONCURRENT_FETCHES``).
+        """
+        async with semaphore:
+            try:
+                book = await self._clob.get_order_book(token_id)
+            except Exception:
+                logger.exception(
+                    "LiveDataFeed: order-book fetch failed for %s", market_id
+                )
+                return market_id, None
+        if not book:
+            return market_id, None
+
+        snapshot = DataNormalizer.normalize_snapshot(market_id, book)
+        if not snapshot.get("timestamp"):
+            snapshot["timestamp"] = datetime.now(UTC).isoformat()
+
+        report = self._validator.check_snapshot(snapshot)
+        if report.quality != DataQuality.HEALTHY:
+            logger.debug(
+                "LiveDataFeed: skipping %s -- %s (%s)",
+                market_id,
+                report.quality.value,
+                report.reason,
+            )
+            return market_id, None
+
+        try:
+            await self._snapshot_repo.insert(MarketSnapshot.from_row(snapshot))
+        except Exception:
+            logger.exception(
+                "LiveDataFeed: failed to persist snapshot for %s", market_id
+            )
+
+        ob_features = OrderBookFeatures().compute(snapshot)
+        liq_features = LiquidityFeatures().compute(snapshot)
+
+        features = {
+            "market_id": market_id,
+            "token_id": token_id,
+            "bid": snapshot["bid"],
+            "ask": snapshot["ask"],
+            **ob_features,
+            **liq_features,
+        }
+        return market_id, features
