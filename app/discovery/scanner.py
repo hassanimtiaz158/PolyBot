@@ -81,19 +81,25 @@ class MarketScanner:
                 continue
 
             question = raw.get("question", "")
-            condition_id = raw.get("condition_id")
+            condition_id = raw.get("conditionId")
             status = raw.get("active", True)
-            resolution_time = raw.get("end_date_iso")
+            resolution_time = raw.get("endDateIso")
             liquidity = float(raw.get("liquidity", 0) or 0)
 
-            # Evaluate eligibility using available metrics
+            # Evaluate eligibility using available metrics. Historical
+            # signal quality, model confidence, and execution quality
+            # cannot be known for a market that has never been observed
+            # or traded -- score them neutral (0.5) rather than worst-case
+            # (0.0) so eligibility for a brand-new market is driven by its
+            # actual, measurable liquidity and spread instead of being
+            # unconditionally capped below the threshold.
             result = self._eligibility.evaluate(
                 market_id,
                 liquidity=liquidity,
                 spread=float(raw.get("spread", 1.0) or 1.0),
-                historical_signal_quality=0.0,
-                model_confidence=0.0,
-                execution_quality=0.0,
+                historical_signal_quality=0.5,
+                model_confidence=0.5,
+                execution_quality=0.5,
             )
 
             if not result.eligible:

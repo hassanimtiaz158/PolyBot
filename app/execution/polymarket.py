@@ -94,6 +94,10 @@ _SIDE_MAP: dict[str, str] = {
     "NO": SELL,
 }
 
+# Sentinel distinguishing "credentials argument omitted" from "explicitly
+# passed as None" -- see PolymarketExecution.__init__.
+_UNSET: Any = object()
+
 
 # -- Data classes --------------------------------------------------------
 
@@ -253,7 +257,7 @@ class PolymarketExecution(ExecutionAdapter):
         order_repo: OrderRepository | None = None,
         breaker: CircuitBreaker | None = None,
         kill_switch: KillSwitch | None = None,
-        credentials: ClobCredentials | None = None,
+        credentials: ClobCredentials | None = _UNSET,  # type: ignore[assignment]
         base_url: str = CLOB_BASE_URL,
         timeout: float = 10.0,
     ) -> None:
@@ -263,11 +267,19 @@ class PolymarketExecution(ExecutionAdapter):
         self._kill_switch = kill_switch
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
-        self._credentials = credentials or self._load_credentials()
+        # ``credentials`` distinguishes "omitted" (auto-load from the real
+        # environment -- production usage) from "explicitly passed, even
+        # as None" (an injected/test identity, or a deliberate no-client
+        # case) -- the latter must NEVER also reach into ambient settings
+        # to build a live, network-capable SDK client using a real key.
+        credentials_given = credentials is not _UNSET
+        self._credentials = credentials if credentials_given else self._load_credentials()
         self._account_state: AccountState | None = None
         self._pending_orders: dict[str, dict[str, Any]] = {}
         self._reconciled = False
-        self._client: ClobClient | None = self._build_client()
+        self._client: ClobClient | None = (
+            None if credentials_given else self._build_client()
+        )
 
         logger.info(
             "PolymarketExecution initialized (live_trading_enabled=%s, signer_configured=%s)",

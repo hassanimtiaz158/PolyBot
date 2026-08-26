@@ -13,6 +13,7 @@ from typing import Any
 from app.audit.events import EventBus
 from app.backtesting.lifecycle import WalkForwardService
 from app.config.settings import settings
+from app.discovery.scanner import MarketScanner
 from app.ev.costs import CostEstimator
 from app.ev.expected_value import ExpectedValueEngine
 from app.execution.engine import ExecutionEngine
@@ -20,6 +21,7 @@ from app.execution.paper import PaperExecution
 from app.execution.polymarket import PolymarketExecution
 from app.modes.state import ModeState, OperatingMode
 from app.monitoring.health import health_status, run_all_checks
+from app.orchestrator.data_feed import LiveDataFeed
 from app.orchestrator.engine import Orchestrator
 from app.orchestrator.pipeline import TradePipeline
 from app.orchestrator.router import SignalRouter
@@ -32,6 +34,7 @@ from app.risk.limits import RiskLimits
 from app.risk.position_sizing import PositionSizer
 from app.storage.db import db
 from app.storage.repositories import (
+    MarketRepository,
     OrderRepository,
     PositionRepository,
     RiskEventRepository,
@@ -61,6 +64,9 @@ class Application:
         )
         self._orchestrator: Orchestrator | None = None
         self._event_bus: EventBus | None = None
+        self._walk_forward: WalkForwardService | None = None
+        self._scanner: MarketScanner | None = None
+        self._data_feed: LiveDataFeed | None = None
 
     async def startup(self) -> None:
         """Initialise database, health checks, and the orchestrator."""
@@ -164,6 +170,17 @@ class Application:
         router.register_strategy("probability", ProbabilityStrategy(), enabled=False)
         router.register_strategy("ensemble", EnsembleStrategy(), enabled=False)
 
+        # ── Live data feed ──────────────────────────────────────────
+        # Fetches CLOB order books for every scanner-discovered market,
+        # validates/persists snapshots, and computes features. Without
+        # this, the orchestrator's data_provider has nothing to return
+        # and no signal can ever be generated.
+        snapshot_repo = SnapshotRepository(db=db)
+        self._data_feed = LiveDataFeed(
+            market_repo=MarketRepository(),
+            snapshot_repo=snapshot_repo,
+        )
+
         # ── Orchestrator ─────────────────────────────────────────────
         self._orchestrator = Orchestrator(
             router=router,
@@ -171,12 +188,11 @@ class Application:
             mode=self.mode_mode,
             kill_switch=kill_switch,
             get_equity=lambda: portfolio.equity,
-            data_provider=None,
+            data_provider=self._data_feed.collect,
             event_bus=self._event_bus,
         )
 
         # ── Walk-forward validation service ────────────────────────
-        snapshot_repo = SnapshotRepository(db=db)
         self._walk_forward = WalkForwardService(
             snapshot_repo=snapshot_repo,
             event_bus=self._event_bus,
@@ -187,6 +203,12 @@ class Application:
             windows=settings.walk_forward_windows,
             fallback_synthetic=settings.walk_forward_fallback_synthetic,
         )
+
+        # ── Market discovery scanner ─────────────────────────────────
+        # Populates the markets table from the Gamma API -- without this
+        # running, nothing ever feeds the pipeline (no markets, no
+        # snapshots, no signals) regardless of mode or risk state.
+        self._scanner = MarketScanner()
 
         # Load persisted circuit breaker state
         await circuit_breaker.load_state()
@@ -226,6 +248,10 @@ class Application:
             self._orchestrator.stop()
         if self._walk_forward is not None:
             self._walk_forward.stop()
+        if self._scanner is not None:
+            self._scanner.stop()
+        if self._data_feed is not None:
+            await self._data_feed.close()
         await db.close()
         if self._event_bus is not None:
             await self._event_bus.emit("SYSTEM_STOP", reason="application shutdown")
@@ -239,6 +265,8 @@ class Application:
             tasks.append(asyncio.create_task(self._orchestrator.run()))
         if self._walk_forward is not None:
             tasks.append(asyncio.create_task(self._walk_forward.run()))
+        if self._scanner is not None:
+            tasks.append(asyncio.create_task(self._scanner.run_loop()))
         try:
             await asyncio.gather(*tasks)
         except asyncio.CancelledError:
