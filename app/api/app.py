@@ -198,9 +198,12 @@ def create_app(database: Database | None = None) -> FastAPI:
     )
 
     # API key authentication (bypassed when POLY_API_KEY is not set).
+    # ``settings.poly_api_key`` is "" rather than None whenever .env
+    # defines the key with a blank value (POLY_API_KEY=) -- treat that
+    # the same as unset, matching the documented bypass behaviour.
     app.add_middleware(
         APIKeyAuthMiddleware,
-        api_key=settings.poly_api_key,
+        api_key=(settings.poly_api_key or None),
     )
 
     app.add_middleware(RequestLoggingMiddleware)
