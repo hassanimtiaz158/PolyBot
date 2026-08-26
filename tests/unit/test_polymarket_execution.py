@@ -1,14 +1,20 @@
 ﻿"""Mock-only tests for the Polymarket CLOB V2 execution adapter.
 
 No real orders are ever submitted.  All external calls are mocked.
+
+Order signing/submission is delegated to Polymarket's official
+``py-clob-client`` SDK (``ClobClient``), so tests that exercise a
+submission/cancel/status/reconcile round-trip mock ``adapter._client``
+(a ``ClobClient``) directly rather than an httpx transport.
 """
 
 from __future__ import annotations
 
 import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
+from py_clob_client.clob_types import ApiCreds
 
 from app.execution.polymarket import (
     AccountState,
@@ -23,9 +29,6 @@ from app.execution.polymarket import (
     _check_kill_switch,
     _check_live_trading_enabled,
     _check_position_limits,
-    _from_fixed_math,
-    _sign_request,
-    _to_fixed_math,
 )
 from app.monitoring.health import health_status
 from app.risk.circuit_breaker import CircuitBreaker
@@ -187,52 +190,6 @@ class TestSafetyGates:
         _check_position_limits(None, "m1", 1000, 0.99)
 
 
-# -- HMAC signing tests -------------------------------------------------
-
-
-class TestSigning:
-    def test_sign_request_deterministic(self):
-        sig1 = _sign_request("dGVzdHNlY3JldA==", "1700000000", "GET", "/data/orders")
-        sig2 = _sign_request("dGVzdHNlY3JldA==", "1700000000", "GET", "/data/orders")
-        assert sig1 == sig2
-        assert isinstance(sig1, str)
-        assert len(sig1) > 0
-
-    def test_sign_request_differs_with_different_secret(self):
-        sig1 = _sign_request("dGVzdHNlY3JldA==", "1700000000", "GET", "/data/orders")
-        sig2 = _sign_request("b3RoZXJzZWNyZXQ=", "1700000000", "GET", "/data/orders")
-        assert sig1 != sig2
-
-    def test_sign_request_differs_with_different_timestamp(self):
-        sig1 = _sign_request("dGVzdHNlY3JldA==", "1700000000", "GET", "/data/orders")
-        sig2 = _sign_request("dGVzdHNlY3JldA==", "1700000001", "GET", "/data/orders")
-        assert sig1 != sig2
-
-    def test_sign_request_includes_body(self):
-        sig1 = _sign_request("dGVzdHNlY3JldA==", "1700000000", "POST", "/order", "{}")
-        sig2 = _sign_request("dGVzdHNlY3JldA==", "1700000000", "POST", "/order", "")
-        assert sig1 != sig2
-
-
-# -- Amount conversion tests -------------------------------------------
-
-
-class TestAmountConversion:
-    def test_to_fixed_math(self):
-        assert _to_fixed_math(1.0) == "1000000"
-        assert _to_fixed_math(0.001) == "1000"
-        assert _to_fixed_math(100.5) == "100500000"
-
-    def test_from_fixed_math(self):
-        assert _from_fixed_math("1000000") == 1.0
-        assert _from_fixed_math("1000") == 0.001
-        assert _from_fixed_math("invalid") == 0.0
-
-    def test_roundtrip(self):
-        for val in [0.01, 0.5, 1.0, 10.0, 100.0]:
-            assert _from_fixed_math(_to_fixed_math(val)) == pytest.approx(val, abs=0.000001)
-
-
 # -- Adapter initialization tests ---------------------------------------
 
 
@@ -244,17 +201,38 @@ class TestInit:
         assert not adapter._reconciled
         assert adapter._pending_orders == {}
 
+    # Well-known Hardhat/Anvil test account #0 private key -- public,
+    # never funded, used only to exercise address derivation in tests.
+    _TEST_PRIVATE_KEY = (
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+    )
+
     def test_loads_credentials_from_settings(self, creds):
         with patch("app.execution.polymarket.settings") as mock_settings:
+            mock_settings.poly_private_key = self._TEST_PRIVATE_KEY
+            mock_settings.poly_funder_address = None
             mock_settings.poly_api_key = creds.api_key
             mock_settings.poly_secret = creds.api_secret
             mock_settings.poly_passphrase = creds.api_passphrase
+            mock_settings.poly_signature_type = 0
             mock_settings.live_trading_enabled = False
             adapter = PolymarketExecution()
             assert adapter._credentials is not None
+            assert adapter._client is not None
+
+    def test_missing_private_key_returns_none(self):
+        with patch("app.execution.polymarket.settings") as mock_settings:
+            mock_settings.poly_private_key = None
+            mock_settings.poly_funder_address = None
+            mock_settings.poly_api_key = None
+            mock_settings.poly_secret = None
+            mock_settings.poly_passphrase = None
+            result = PolymarketExecution._load_credentials()
+            assert result is None
 
     def test_missing_credentials_returns_none(self):
         with patch("app.execution.polymarket.settings") as mock_settings:
+            mock_settings.poly_private_key = None
             mock_settings.poly_api_key = None
             mock_settings.poly_secret = None
             mock_settings.poly_passphrase = None
@@ -474,9 +452,9 @@ class TestSubmit:
             address=creds.address, api_key=creds.api_key, is_valid=True
         )
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
+        mock_client = MagicMock()
+        mock_client.create_order.return_value = MagicMock()  # signed order
+        mock_client.post_order.return_value = {
             "success": True,
             "orderID": "0xabc123",
             "status": "matched",
@@ -486,11 +464,6 @@ class TestSubmit:
             "tradeIDs": ["trade1"],
             "errorMsg": "",
         }
-        mock_response.raise_for_status = MagicMock()
-
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=mock_response)
-        mock_client.is_closed = False
         adapter._client = mock_client
 
         with patch("app.execution.polymarket.settings") as mock_settings:
@@ -512,6 +485,8 @@ class TestSubmit:
         assert result["order_id"] == "0xabc123"
         assert result["filled_size"] == 10.0
         assert result["error"] is None
+        mock_client.create_order.assert_called_once()
+        mock_client.post_order.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_http_error_rejected(self, creds, healthy_health, breaker_ok):
@@ -520,19 +495,14 @@ class TestSubmit:
             address=creds.address, api_key=creds.api_key, is_valid=True
         )
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
+        mock_client = MagicMock()
+        mock_client.create_order.return_value = MagicMock()
+        mock_client.post_order.return_value = {
             "success": False,
             "orderID": "",
             "status": "failed",
             "errorMsg": "Insufficient balance",
         }
-        mock_response.raise_for_status = MagicMock()
-
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=mock_response)
-        mock_client.is_closed = False
         adapter._client = mock_client
 
         with patch("app.execution.polymarket.settings") as mock_settings:
@@ -577,15 +547,8 @@ class TestCancel:
     @pytest.mark.asyncio
     async def test_cancel_success(self, creds):
         adapter = PolymarketExecution(credentials=creds)
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {}
-        mock_response.raise_for_status = MagicMock()
-
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=mock_response)
-        mock_client.is_closed = False
+        mock_client = MagicMock()
+        mock_client.cancel.return_value = {}
         adapter._client = mock_client
 
         with patch("app.execution.polymarket.settings") as mock_settings:
@@ -593,20 +556,14 @@ class TestCancel:
             result = await adapter.cancel("ord1")
 
         assert result is True
+        mock_client.cancel.assert_called_once_with("ord1")
 
     @pytest.mark.asyncio
     async def test_cancel_updates_pending(self, creds):
         adapter = PolymarketExecution(credentials=creds)
         adapter._pending_orders["ord1"] = {"status": "LIVE"}
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {}
-        mock_response.raise_for_status = MagicMock()
-
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=mock_response)
-        mock_client.is_closed = False
+        mock_client = MagicMock()
+        mock_client.cancel.return_value = {}
         adapter._client = mock_client
 
         with patch("app.execution.polymarket.settings") as mock_settings:
@@ -655,18 +612,17 @@ class TestReconciliation:
     async def test_reconcile_success(self, creds):
         adapter = PolymarketExecution(credentials=creds)
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = [
+        mock_client = MagicMock()
+        mock_client.creds = ApiCreds(
+            api_key=creds.api_key,
+            api_secret=creds.api_secret,
+            api_passphrase=creds.api_passphrase,
+        )
+        mock_client.get_orders.return_value = [
             {"orderID": "o1", "status": "live"},
             {"orderID": "o2", "status": "matched"},
             {"orderID": "o3", "status": "cancelled"},
         ]
-        mock_response.raise_for_status = MagicMock()
-
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=mock_response)
-        mock_client.is_closed = False
         adapter._client = mock_client
 
         result = await adapter.reconcile()
@@ -682,9 +638,13 @@ class TestReconciliation:
     async def test_reconcile_http_error_fails(self, creds):
         adapter = PolymarketExecution(credentials=creds)
 
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(side_effect=Exception("Connection refused"))
-        mock_client.is_closed = False
+        mock_client = MagicMock()
+        mock_client.creds = ApiCreds(
+            api_key=creds.api_key,
+            api_secret=creds.api_secret,
+            api_passphrase=creds.api_passphrase,
+        )
+        mock_client.get_orders.side_effect = Exception("Connection refused")
         adapter._client = mock_client
 
         result = await adapter.reconcile()
@@ -708,9 +668,9 @@ class TestFullSafetyGates:
             address=creds.address, api_key=creds.api_key, is_valid=True
         )
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
+        mock_client = MagicMock()
+        mock_client.create_order.return_value = MagicMock()
+        mock_client.post_order.return_value = {
             "success": True,
             "orderID": "0xorder1",
             "status": "live",
@@ -718,11 +678,6 @@ class TestFullSafetyGates:
             "takingAmount": "5000000",
             "errorMsg": "",
         }
-        mock_response.raise_for_status = MagicMock()
-
-        mock_client = AsyncMock()
-        mock_client.request = AsyncMock(return_value=mock_response)
-        mock_client.is_closed = False
         adapter._client = mock_client
 
         with patch("app.execution.polymarket.settings") as mock_settings:

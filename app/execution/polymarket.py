@@ -16,23 +16,24 @@ Safety model
     ``ExecutionEngine`` -- the adapter trusts that gate but adds its own
     pre-flight checks).
 
-CLOB V2 API reference
----------------------
-- ``POST /order``        -- place a new signed order
-- ``DELETE /order/{id}`` -- cancel an existing order
-- ``GET /data/orders``   -- list open / historical orders (L2 auth)
-- Auth headers: ``POLY_API_KEY``, ``POLY_ADDRESS``, ``POLY_SIGNATURE``,
-  ``POLY_PASSPHRASE``, ``POLY_TIMESTAMP``
+Order signing
+-------------
+Order construction and EIP-712 signing is delegated entirely to
+Polymarket's own ``py-clob-client`` SDK (``ClobClient`` / ``Signer``)
+rather than hand-rolled here. Reimplementing the exchange contract
+address and struct field order by hand is both hard to verify and
+catastrophic to get wrong with real funds; the official SDK is
+maintained by Polymarket and is the ground-truth implementation.
+
+The SDK's HTTP calls are synchronous -- every call into it runs via
+``asyncio.to_thread`` so the bot's event loop is never blocked.
 
 This module NEVER submits a real order unless all safety gates pass.
 """
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
-import json
+import asyncio
 import logging
 import os
 import time
@@ -40,7 +41,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
+from py_clob_client.client import ClobClient
+from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType
+from py_clob_client.exceptions import PolyApiException
+from py_clob_client.order_builder.constants import BUY, SELL
+from py_clob_client.signer import Signer
 
 from app.config.settings import settings
 from app.execution.interface import ExecutionAdapter
@@ -57,14 +62,21 @@ logger = logging.getLogger(__name__)
 CLOB_BASE_URL = "https://clob.polymarket.com"
 CHAIN_ID = 137
 
-ORDER_TYPES = {"GTC", "FOK", "GTD", "FAK"}
-
-FIXED_MATH_DECIMALS = 6
-FIXED_MATHPLIER: int = 10**FIXED_MATH_DECIMALS
-
-DEFAULT_TIMEOUT = 10.0
 MAX_RETRIES = 3
 RETRY_BACKOFF_BASE = 1.5
+
+# CLOB order responses report making/takingAmount in fixed-point base
+# units (10^6), independent of SDK-side order signing/construction.
+_AMOUNT_DECIMALS = 6
+_AMOUNT_MULTIPLIER = 10**_AMOUNT_DECIMALS
+
+
+def _from_fixed_amount(value: Any) -> float:
+    """Convert a CLOB fixed-point base-unit amount to a human-readable float."""
+    try:
+        return float(value) / _AMOUNT_MULTIPLIER
+    except (ValueError, TypeError):
+        return 0.0
 
 _CLOB_STATUS_MAP: dict[str, str] = {
     "live": "LIVE",
@@ -78,16 +90,22 @@ _CLOB_STATUS_MAP: dict[str, str] = {
 }
 
 _SIDE_MAP: dict[str, str] = {
-    "YES": "BUY",
-    "NO": "SELL",
+    "YES": BUY,
+    "NO": SELL,
 }
 
 
 # -- Data classes --------------------------------------------------------
 
+
 @dataclass
 class ClobCredentials:
-    """Polymarket CLOB API credentials (L2 auth)."""
+    """Polymarket CLOB API credentials (L2 auth).
+
+    ``api_key``/``api_secret``/``api_passphrase`` may be blank -- if so
+    they are derived once from the wallet's private key during
+    ``reconcile()`` via ``ClobClient.create_or_derive_api_creds()``.
+    """
 
     api_key: str
     api_secret: str
@@ -209,58 +227,6 @@ def _check_idempotency(
         raise SafetyViolation(f"Duplicate order submission blocked: {order_id}")
 
 
-# -- HMAC signing --------------------------------------------------------
-
-
-def _sign_request(
-    secret_b64: str,
-    timestamp: str,
-    method: str,
-    request_path: str,
-    body: str = "",
-) -> str:
-    """Create L2 HMAC-SHA256 signature for authenticated CLOB requests."""
-    message = f"{timestamp}{method.upper()}{request_path}{body}"
-    secret_bytes = base64.b64decode(secret_b64)
-    sig = hmac.new(secret_bytes, message.encode("utf-8"), hashlib.sha256).digest()
-    from base64 import urlsafe_b64encode
-    return urlsafe_b64encode(sig).rstrip(b"=").decode("utf-8")
-
-
-def _auth_headers(
-    creds: ClobCredentials,
-    method: str,
-    request_path: str,
-    body: str = "",
-) -> dict[str, str]:
-    """Build the five L2-authenticated headers for a CLOB request."""
-    timestamp = str(int(time.time()))
-    signature = _sign_request(creds.api_secret, timestamp, method, request_path, body)
-    return {
-        "POLY_ADDRESS": creds.address,
-        "POLY_API_KEY": creds.api_key,
-        "POLY_PASSPHRASE": creds.api_passphrase,
-        "POLY_SIGNATURE": signature,
-        "POLY_TIMESTAMP": timestamp,
-    }
-
-
-# -- Amount conversion ---------------------------------------------------
-
-
-def _to_fixed_math(value: float) -> str:
-    """Convert human-readable amount to Polymarket fixed-math string."""
-    return str(int(round(value * FIXED_MATHPLIER)))
-
-
-def _from_fixed_math(value: str) -> float:
-    """Convert Polymarket fixed-math string to human-readable float."""
-    try:
-        return float(value) / FIXED_MATHPLIER
-    except (ValueError, TypeError):
-        return 0.0
-
-
 # -- Main adapter --------------------------------------------------------
 
 
@@ -272,14 +238,14 @@ class PolymarketExecution(ExecutionAdapter):
 
     1. ``settings.live_trading_enabled`` is ``True``.
     2. Operating mode is ``LIVE_GUARDED``.
-    3. Valid credentials are configured and loaded.
+    3. A valid wallet private key is configured (``POLY_PRIVATE_KEY``).
     4. Account has been reconciled (``reconcile()`` called successfully).
     5. Circuit breaker is not HALTED.
     6. Kill switch is not active.
     7. Data freshness and API health checks pass.
     8. Position limits pass immediately before submission.
     9. No duplicate order_id.
-"""
+    """
 
     def __init__(
         self,
@@ -289,7 +255,7 @@ class PolymarketExecution(ExecutionAdapter):
         kill_switch: KillSwitch | None = None,
         credentials: ClobCredentials | None = None,
         base_url: str = CLOB_BASE_URL,
-        timeout: float = DEFAULT_TIMEOUT,
+        timeout: float = 10.0,
     ) -> None:
         self._portfolio = portfolio
         self._order_repo = order_repo
@@ -300,49 +266,94 @@ class PolymarketExecution(ExecutionAdapter):
         self._credentials = credentials or self._load_credentials()
         self._account_state: AccountState | None = None
         self._pending_orders: dict[str, dict[str, Any]] = {}
-        self._client: httpx.AsyncClient | None = None
         self._reconciled = False
-        self._order_repos: dict[str, dict[str, Any]] = {}
+        self._client: ClobClient | None = self._build_client()
 
         logger.info(
-            "PolymarketExecution initialized (live_trading_enabled=%s)",
+            "PolymarketExecution initialized (live_trading_enabled=%s, signer_configured=%s)",
             settings.live_trading_enabled,
+            self._client is not None,
         )
 
     # -- Credential loading ----------------------------------------------
 
     @staticmethod
     def _load_credentials() -> ClobCredentials | None:
-        """Load credentials from environment variables."""
+        """Load credentials from environment variables.
+
+        A wallet private key (``POLY_PRIVATE_KEY``) is required -- without
+        it no order can ever be signed, so the adapter has no usable
+        credentials at all. The HMAC L2 identity (api_key/secret/
+        passphrase) is optional here; if absent it is derived from the
+        private key on first ``reconcile()``.
+        """
+        private_key = (settings.poly_private_key or "").strip()
+        if not private_key:
+            logger.warning(
+                "POLY_PRIVATE_KEY not configured -- live orders cannot be signed"
+            )
+            return None
+
+        address = (settings.poly_funder_address or "").strip()
+        if not address:
+            try:
+                address = Signer(private_key, CHAIN_ID).address()
+            except Exception:
+                logger.exception("Failed to derive wallet address from private key")
+                return None
+
         api_key = (settings.poly_api_key or "").strip()
         api_secret = (settings.poly_secret or "").strip()
         passphrase = (settings.poly_passphrase or "").strip()
-        if not all([api_key, api_secret, passphrase]):
-            logger.warning("Polymarket credentials not fully configured")
-            return None
         return ClobCredentials(
             api_key=api_key,
             api_secret=api_secret,
             api_passphrase=passphrase,
-            address=api_key,
+            address=address,
         )
 
-    # -- HTTP client management ------------------------------------------
+    def _build_client(self) -> ClobClient | None:
+        """Construct the official Polymarket SDK client, if a signing
+        key is configured. Returns ``None`` when no private key is
+        available -- ``submit``/``cancel``/``status`` then fail closed.
+        """
+        private_key = (settings.poly_private_key or "").strip()
+        if not private_key:
+            return None
 
-    async def _get_client(self) -> httpx.AsyncClient:
-        """Get or create the shared HTTP client."""
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                base_url=self._base_url,
-                timeout=httpx.Timeout(self._timeout),
-                headers={"User-Agent": "PolyQuantBot/0.1.0"},
+        creds: ApiCreds | None = None
+        if self._credentials and all(
+            [
+                self._credentials.api_key,
+                self._credentials.api_secret,
+                self._credentials.api_passphrase,
+            ]
+        ):
+            creds = ApiCreds(
+                api_key=self._credentials.api_key,
+                api_secret=self._credentials.api_secret,
+                api_passphrase=self._credentials.api_passphrase,
             )
-        return self._client
 
-    async def close(self) -> None:
-        """Close the HTTP client."""
-        if self._client and not self._client.is_closed:
-            await self._client.aclose()
+        try:
+            return ClobClient(
+                self._base_url,
+                key=private_key,
+                chain_id=CHAIN_ID,
+                creds=creds,
+                signature_type=settings.poly_signature_type,
+                funder=(settings.poly_funder_address or None),
+            )
+        except Exception:
+            logger.exception("Failed to construct Polymarket CLOB client")
+            return None
+
+    # -- Thread offload for the (synchronous) SDK -------------------------
+
+    @staticmethod
+    async def _call_client(fn: Any, *args: Any, **kwargs: Any) -> Any:
+        """Run a synchronous SDK call off the event loop thread."""
+        return await asyncio.to_thread(fn, *args, **kwargs)
 
     # -- Safety gate: all checks combined --------------------------------
 
@@ -366,7 +377,7 @@ class PolymarketExecution(ExecutionAdapter):
         _check_position_limits(self._portfolio, market_id, size, price)
         _check_idempotency(order_id, self._pending_orders)
 
-        if self._credentials is None:
+        if self._credentials is None or self._client is None:
             raise SafetyViolation("Polymarket credentials not configured")
 
     # -- ExecutionAdapter interface --------------------------------------
@@ -393,8 +404,6 @@ class PolymarketExecution(ExecutionAdapter):
         price = float(order.get("price", 0))
         token_id = str(order.get("token_id", ""))
 
-        now = datetime.now(UTC).isoformat()
-
         # -- Pre-flight validation ---------------------------------------
         if not order_id:
             return self._build_rejected(order_id, market_id, side, size, "Missing order_id")
@@ -420,55 +429,39 @@ class PolymarketExecution(ExecutionAdapter):
             logger.warning("Safety gate blocked order %s: %s", order_id, exc)
             return self._build_rejected(order_id, market_id, side, size, str(exc))
 
-        # -- Build CLOB V2 order payload ---------------------------------
-        creds = self._credentials
-        assert creds is not None  # guaranteed by _run_all_safety_checks
-        clob_side = _SIDE_MAP.get(side, "BUY")
-        maker_amount = size
-        taker_amount = size * price
+        # -- Create, sign (EIP-712), and submit via the official SDK -----
+        assert self._client is not None  # guaranteed by _run_all_safety_checks
+        clob_side = _SIDE_MAP.get(side, BUY)
+        order_args = OrderArgs(token_id=token_id, price=price, size=size, side=clob_side)
 
-        ts_ms = str(int(time.time() * 1000))
-        salt = str(int(time.time() * 1000000) % (2**63))
-
-        payload_order = {
-            "maker": creds.address,
-            "signer": creds.address,
-            "tokenId": token_id,
-            "makerAmount": _to_fixed_math(maker_amount),
-            "takerAmount": _to_fixed_math(taker_amount),
-            "side": clob_side,
-            "expiration": "0",
-            "timestamp": ts_ms,
-            "metadata": "0x0000000000000000000000000000000000000000000000000000000000000000",
-            "builder": "0x0000000000000000000000000000000000000000000000000000000000000000",
-            "signature": "0x0000000000000000000000000000000000000000000000000000000000000000",
-            "salt": salt,
-            "signatureType": 1,
-        }
-
-        request_body = {
-            "order": payload_order,
-            "owner": creds.api_key,
-            "orderType": "GTC",
-            "deferExec": False,
-            "postOnly": False,
-        }
-
-        body_str = json.dumps(request_body, separators=(",", ":"))
-
-        # -- Submit with retries -----------------------------------------
         try:
-            result = await self._http_request_with_retry(
-                "POST", "/order", body_str
-            )
+            result = await self._call_client(self._submit_sync, order_args)
         except Exception as exc:
             logger.exception("CLOB submission failed for %s", order_id)
-            return self._build_rejected(order_id, market_id, side, size, f"HTTP error: {exc}")
+            return self._build_rejected(order_id, market_id, side, size, f"Error: {exc}")
 
-        # -- Parse response ----------------------------------------------
-        return self._parse_order_response(
-            order_id, market_id, side, size, price, result, now
-        )
+        return self._parse_order_response(order_id, market_id, side, size, result)
+
+    def _submit_sync(self, order_args: OrderArgs) -> Any:
+        """Runs on a worker thread: sign and post the order via the SDK."""
+        assert self._client is not None
+        last_exc: Exception | None = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                signed_order = self._client.create_order(order_args)
+                return self._client.post_order(signed_order, OrderType.GTC)
+            except PolyApiException as exc:
+                if exc.status_code in (429, 500, 502, 503, 504):
+                    wait = RETRY_BACKOFF_BASE * (attempt + 1)
+                    logger.warning(
+                        "CLOB error %s on submit (attempt %d/%d), retrying in %.1fs",
+                        exc.status_code, attempt + 1, MAX_RETRIES, wait,
+                    )
+                    time.sleep(wait)  # runs on a worker thread -- event loop is unaffected
+                    last_exc = exc
+                    continue
+                raise
+        raise last_exc or RuntimeError(f"Order submission failed after {MAX_RETRIES} retries")
 
     async def cancel(self, order_id: str) -> bool:
         """Cancel an order by ID.
@@ -492,13 +485,12 @@ class PolymarketExecution(ExecutionAdapter):
         except SafetyViolation:
             return False
 
-        if self._credentials is None:
+        if self._client is None:
             logger.warning("Cannot cancel -- credentials not configured")
             return False
 
         try:
-            path = f"/order/{order_id}"
-            await self._http_request_with_retry("DELETE", path)
+            await self._call_client(self._client.cancel, order_id)
             logger.info("Cancelled order %s", order_id)
 
             if order_id in self._pending_orders:
@@ -529,12 +521,11 @@ class PolymarketExecution(ExecutionAdapter):
         if order_id in self._pending_orders:
             return dict(self._pending_orders[order_id])
 
-        if self._credentials is None:
+        if self._client is None:
             return {"order_id": order_id, "status": "UNKNOWN", "error": "No credentials"}
 
         try:
-            path = f"/data/order/{order_id}"
-            result = await self._http_request_with_retry("GET", path)
+            result = await self._call_client(self._client.get_order, order_id)
             return self._parse_status_response(order_id, result)
         except Exception as exc:
             logger.warning("Status query failed for %s: %s", order_id, exc)
@@ -545,26 +536,33 @@ class PolymarketExecution(ExecutionAdapter):
     async def reconcile(self) -> ReconciliationResult:
         """Reconcile account state before trading begins.
 
-        Fetches open orders from the CLOB to verify account connectivity
-        and establish the baseline for idempotency checks.
+        Derives L2 API credentials from the private key if not already
+        configured, then fetches open orders from the CLOB to verify
+        account connectivity and establish the baseline for idempotency
+        checks.
 
         Returns
         -------
         ReconciliationResult
             Outcome of the reconciliation.
         """
-        if self._credentials is None:
+        if self._client is None or self._credentials is None:
             return ReconciliationResult(
                 success=False,
                 error="Credentials not configured",
             )
 
         try:
-            result = await self._http_request_with_retry("GET", "/data/orders")
-            orders = result if isinstance(result, list) else result.get("orders", [])
+            if self._client.creds is None:
+                creds = await self._call_client(self._client.create_or_derive_api_creds)
+                self._client.set_api_creds(creds)
+                self._credentials.api_key = creds.api_key
+                self._credentials.api_secret = creds.api_secret
+                self._credentials.api_passphrase = creds.api_passphrase
 
+            orders = await self._call_client(self._client.get_orders)
             open_ids = [
-                str(o.get("orderID", o.get("id", "")))
+                str(o.get("id", o.get("orderID", "")))
                 for o in orders
                 if o.get("status") in ("live", "matched", "delayed")
             ]
@@ -596,67 +594,6 @@ class PolymarketExecution(ExecutionAdapter):
             )
             return ReconciliationResult(success=False, error=str(exc))
 
-    # -- HTTP helpers ----------------------------------------------------
-
-    async def _http_request_with_retry(
-        self,
-        method: str,
-        path: str,
-        body: str = "",
-    ) -> Any:
-        """Execute an HTTP request with retry on transient errors."""
-        last_exc: Exception | None = None
-
-        for attempt in range(MAX_RETRIES):
-            try:
-                return await self._http_request(method, path, body)
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code in (429, 500, 502, 503, 504):
-                    retry_after = float(
-                        exc.response.headers.get("Retry-After", RETRY_BACKOFF_BASE * (attempt + 1))
-                    )
-                    logger.warning(
-                        "HTTP %d on %s (attempt %d/%d), retrying in %.1fs",
-                        exc.response.status_code, path, attempt + 1, MAX_RETRIES, retry_after,
-                    )
-                    time.sleep(retry_after)
-                    last_exc = exc
-                else:
-                    raise
-            except (httpx.ConnectError, httpx.ReadTimeout) as exc:
-                logger.warning(
-                    "Network error on %s (attempt %d/%d): %s",
-                    path, attempt + 1, MAX_RETRIES, exc,
-                )
-                time.sleep(RETRY_BACKOFF_BASE * (attempt + 1))
-                last_exc = exc
-
-        raise last_exc or RuntimeError(f"Request failed after {MAX_RETRIES} retries")
-
-    async def _http_request(
-        self,
-        method: str,
-        path: str,
-        body: str = "",
-    ) -> Any:
-        """Execute a single authenticated HTTP request."""
-        if self._credentials is None:
-            raise SafetyViolation("Polymarket credentials not configured")
-        client = await self._get_client()
-        headers = _auth_headers(self._credentials, method, path, body)
-
-        kwargs: dict[str, Any] = {"headers": headers}
-        if body and method in ("POST", "PUT", "PATCH"):
-            kwargs["content"] = body
-            kwargs["headers"]["Content-Type"] = "application/json"
-
-        response = await client.request(method, path, **kwargs)
-        response.raise_for_status()
-
-        if response.status_code == 204:
-            return {}
-        return response.json()
-
     # -- Response parsing ------------------------------------------------
 
     def _parse_order_response(
@@ -665,11 +602,11 @@ class PolymarketExecution(ExecutionAdapter):
         market_id: str,
         side: str,
         size: float,
-        price: float,
         result: Any,
-        timestamp: str,
     ) -> dict[str, Any]:
         """Parse CLOB order response into standard format."""
+        timestamp = datetime.now(UTC).isoformat()
+
         if not isinstance(result, dict):
             return self._build_rejected(order_id, market_id, side, size, "Invalid response")
 
@@ -684,8 +621,8 @@ class PolymarketExecution(ExecutionAdapter):
 
         internal_status = _CLOB_STATUS_MAP.get(clob_status, "REJECTED")
 
-        making_amount = _from_fixed_math(str(result.get("makingAmount", "0")))
-        taking_amount = _from_fixed_math(str(result.get("takingAmount", "0")))
+        making_amount = _from_fixed_amount(result.get("makingAmount", "0"))
+        taking_amount = _from_fixed_amount(result.get("takingAmount", "0"))
 
         filled_size = making_amount if internal_status == "FILLED" else 0.0
         if making_amount > 0 and internal_status == "FILLED":
@@ -719,7 +656,7 @@ class PolymarketExecution(ExecutionAdapter):
                     market_id=market_id,
                     side=side,
                     size=filled_size,
-                    price=average_fill or price,
+                    price=average_fill if average_fill is not None else 0.0,
                     fee=0.0,
                 )
             except Exception:

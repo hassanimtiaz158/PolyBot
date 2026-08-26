@@ -17,6 +17,7 @@ from app.ev.costs import CostEstimator
 from app.ev.expected_value import ExpectedValueEngine
 from app.execution.engine import ExecutionEngine
 from app.execution.paper import PaperExecution
+from app.execution.polymarket import PolymarketExecution
 from app.modes.state import ModeState, OperatingMode
 from app.monitoring.health import health_status, run_all_checks
 from app.orchestrator.engine import Orchestrator
@@ -95,21 +96,51 @@ class Application:
             breaker=circuit_breaker,
         )
 
-        paper_adapter = PaperExecution(
-            rejection_rate=0.01,
-            latency_ms=200.0,
-            fee_rate=0.05,
-        )
-        exec_engine = ExecutionEngine(
-            adapter=paper_adapter,
-            kill_switch=kill_switch,
-            event_bus=self._event_bus,
-        )
-
         # ── Repositories ─────────────────────────────────────────────
         signal_repo = SignalRepository()
         order_repo = OrderRepository()
         position_repo = PositionRepository()
+
+        # ── Execution adapter ─────────────────────────────────────────
+        # Live orders are only ever routed to PolymarketExecution when the
+        # operator has explicitly set mode=LIVE_GUARDED AND
+        # LIVE_TRADING_ENABLED=true. Every other mode (including an
+        # unrecognised one) falls back to paper execution — this must
+        # fail closed, never fail open into live trading.
+        if (
+            self.mode_mode.mode is OperatingMode.LIVE_GUARDED
+            and settings.live_trading_enabled
+        ):
+            adapter: PaperExecution | PolymarketExecution = PolymarketExecution(
+                portfolio=portfolio,
+                order_repo=order_repo,
+                breaker=circuit_breaker,
+                kill_switch=kill_switch,
+            )
+            logger.warning(
+                "LIVE execution adapter active — real orders may be submitted"
+            )
+            # Every order submission is gated on _account_state.is_valid;
+            # without this the adapter would reject every single order
+            # with "Account state not reconciled" forever.
+            live_recon = await adapter.reconcile()
+            if not live_recon.success:
+                logger.error(
+                    "Live account reconciliation failed: %s — "
+                    "all live orders will be rejected until this succeeds",
+                    live_recon.error,
+                )
+        else:
+            adapter = PaperExecution(
+                rejection_rate=0.01,
+                latency_ms=200.0,
+                fee_rate=0.05,
+            )
+        exec_engine = ExecutionEngine(
+            adapter=adapter,
+            kill_switch=kill_switch,
+            event_bus=self._event_bus,
+        )
 
         # ── Pipeline ─────────────────────────────────────────────────
         pipeline = TradePipeline(

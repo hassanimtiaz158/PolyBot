@@ -28,6 +28,17 @@ class Settings(BaseSettings):
     poly_secret: str | None = None
     poly_passphrase: str | None = None
 
+    # ── Polymarket wallet (required only for LIVE_GUARDED order signing) ──
+    # The private key that signs order EIP-712 payloads. Never logged or
+    # persisted; loaded from the environment only. Leave unset outside of
+    # live trading — PolymarketExecution refuses to submit orders without it.
+    poly_private_key: str | None = None
+    # Funder/proxy wallet address holding trading funds. Required when
+    # poly_signature_type != 0 (email/Magic or browser-proxy wallets).
+    poly_funder_address: str | None = None
+    # EOA=0, POLY_PROXY (email/Magic wallet)=1, POLY_GNOSIS_SAFE (browser proxy)=2
+    poly_signature_type: int = Field(default=0, ge=0, le=2)
+
     # ── Emergency control interface ─────────────────────────────────
     # Dedicated secret for the writable /api/control/* endpoints
     # (kill switch + resume).  Required even when POLY_API_KEY is unset.
