@@ -42,11 +42,26 @@ def _now() -> str:
 @router.websocket("/ws/dashboard")
 async def dashboard_ws(websocket: WebSocket) -> None:
     """Stream dashboard events to a single connected client."""
+    # Authentication: accept apiKey query param OR first-message auth.
+    # The query param is logged by proxies; prefer sending the key as
+    # the first message after accept for better secrecy.
     if settings.poly_api_key:
         provided = websocket.query_params.get("apiKey", "")
-        if not provided or not secrets.compare_digest(provided, settings.poly_api_key):
-            await websocket.close(code=AUTH_CLOSE_CODE)
-            return
+        if provided and secrets.compare_digest(provided, settings.poly_api_key):
+            pass  # authenticated via query param
+        else:
+            # Try first-message auth
+            await websocket.accept()
+            try:
+                first_msg = await asyncio.wait_for(websocket.receive_text(), timeout=5.0)
+                data = json.loads(first_msg)
+                msg_key = data.get("apiKey", "")
+                if not msg_key or not secrets.compare_digest(msg_key, settings.poly_api_key):
+                    await websocket.close(code=AUTH_CLOSE_CODE)
+                    return
+            except (asyncio.TimeoutError, json.JSONDecodeError, Exception):
+                await websocket.close(code=AUTH_CLOSE_CODE)
+                return
 
     broadcaster = websocket.app.state.broadcaster
     await websocket.accept()

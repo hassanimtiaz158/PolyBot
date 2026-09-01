@@ -68,9 +68,11 @@ class RiskDecision:
     approved: bool
     market_id: str
     side: str
+    action: str = "BUY"
     size: float = 0.0
     reason: str = ""
     signal_id: str = ""
+    token_id: str = ""
     net_edge: float | None = None
     risk_metrics: dict[str, float] = field(default_factory=dict)
     breaker_state: str | None = None
@@ -270,7 +272,6 @@ class RiskEngine:
             confidence=signal.confidence or 0.0,
             net_edge=net_edge or 0.0,
             liquidity=feat.get("liquidity_score", float("inf")),
-            risk_limit=equity * 0.25,
         )
 
         # Validate proposed size is finite and positive
@@ -455,9 +456,11 @@ class RiskEngine:
             approved=True,
             market_id=signal.market_id,
             side=signal.side,
+            action=signal.action,
             size=proposed_size,
             reason="",
             signal_id=signal.signal_id,
+            token_id=signal.token_id,
             net_edge=net_edge,
             risk_metrics={
                 "equity": equity,

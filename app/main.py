@@ -138,9 +138,9 @@ class Application:
                 )
         else:
             adapter = PaperExecution(
-                rejection_rate=0.01,
-                latency_ms=200.0,
-                fee_rate=0.05,
+                rejection_rate=settings.paper_rejection_rate,
+                latency_ms=settings.paper_latency_ms,
+                fee_rate=settings.paper_fee_rate,
             )
         exec_engine = ExecutionEngine(
             adapter=adapter,
@@ -274,9 +274,9 @@ class Application:
             self._scanner.stop()
         if self._data_feed is not None:
             await self._data_feed.close()
-        await db.close()
         if self._event_bus is not None:
             await self._event_bus.emit("SYSTEM_STOP", reason="application shutdown")
+        await db.close()
         logger.info("Shutdown complete")
 
     async def run(self) -> None:

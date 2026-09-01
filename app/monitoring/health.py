@@ -122,6 +122,8 @@ class ApiHealthCheck:
     """Verifies external API connectivity.
 
     Passes automatically when no credentials are configured (research/demo mode).
+    When configured, performs a lightweight GET to the CLOB /book endpoint
+    with a bogus token to verify the exchange is reachable.
     """
 
     async def check(self) -> bool:
@@ -129,10 +131,19 @@ class ApiHealthCheck:
             health_status.set_healthy("api")
             return True
         try:
-            # In production this would ping the exchange REST/WS endpoint.
-            # For now, assume reachable if no exception on a lightweight call.
-            health_status.set_healthy("api")
-            return True
+            import httpx
+
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(
+                    "https://clob.polymarket.com/book",
+                    params={"token_id": "0xhealthcheck"},
+                )
+                # Any HTTP response (even 400/404) means the API is reachable
+                if resp.status_code < 500:
+                    health_status.set_healthy("api")
+                    return True
+                health_status.set_unhealthy("api")
+                return False
         except Exception:
             health_status.set_unhealthy("api")
             return False

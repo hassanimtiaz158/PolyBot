@@ -45,6 +45,7 @@ Thumbs.db
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+.hypothesis/
 
 # ── Notebooks ───────────────────────────────────────────────────────
 notebooks/.ipynb_checkpoints/

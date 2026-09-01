@@ -109,7 +109,8 @@ async def resume_kill_switch(
     try:
         state = await ks.resume(operator=body.operator, confirm=True)
     except KillSwitchResumeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        # Sanitize: only expose the error type, not internal details
+        raise HTTPException(status_code=409, detail="resume failed") from exc
     return KillSwitchResponse(
         state=state.value,
         reason=None,

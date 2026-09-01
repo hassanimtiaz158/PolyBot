@@ -84,6 +84,59 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add security headers to all responses."""
+
+    async def dispatch(self, request: Request, call_next: Any) -> Any:
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Simple in-memory rate limiter per client IP.
+
+    Limits to 100 requests per 60-second window per IP. Returns 429
+    when exceeded. For production use, consider a distributed rate
+    limiter (Redis, etc.).
+    """
+
+    def __init__(self, app: Any, max_requests: int = 100, window_seconds: int = 60) -> None:
+        super().__init__(app)
+        self._max_requests = max_requests
+        self._window = window_seconds
+        self._requests: dict[str, list[float]] = {}
+
+    async def dispatch(self, request: Request, call_next: Any) -> Any:
+        # Skip rate limiting for health checks and WebSocket
+        if request.url.path in _PUBLIC_PATHS or request.scope["type"] == "websocket":
+            return await call_next(request)
+
+        client_ip = request.client.host if request.client else "unknown"
+        now = time.time()
+        cutoff = now - self._window
+
+        # Prune old entries
+        if client_ip in self._requests:
+            self._requests[client_ip] = [
+                t for t in self._requests[client_ip] if t > cutoff
+            ]
+        else:
+            self._requests[client_ip] = []
+
+        if len(self._requests[client_ip]) >= self._max_requests:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "rate limit exceeded"},
+            )
+
+        self._requests[client_ip].append(now)
+        return await call_next(request)
+
+
 class APIKeyAuthMiddleware(BaseHTTPMiddleware):
     """Optional API key authentication middleware.
 
@@ -191,7 +244,7 @@ def create_app(database: Database | None = None) -> FastAPI:
     ]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=cors_origins or ["*"],
+        allow_origins=cors_origins if cors_origins else ["http://localhost:8501"],
         allow_credentials=False,
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
@@ -201,11 +254,23 @@ def create_app(database: Database | None = None) -> FastAPI:
     # ``settings.poly_api_key`` is "" rather than None whenever .env
     # defines the key with a blank value (POLY_API_KEY=) -- treat that
     # the same as unset, matching the documented bypass behaviour.
+    # However, when live trading is enabled, enforce authentication.
+    api_key_value = settings.poly_api_key or None
+    if api_key_value is None and settings.live_trading_enabled:
+        logger.warning(
+            "POLY_API_KEY is not set but LIVE_TRADING_ENABLED=true -- "
+            "enforcing authentication with a generated ephemeral key"
+        )
+        import secrets as _secrets
+        api_key_value = _secrets.token_urlsafe(32)
+        logger.warning("Ephemeral API key (set POLY_API_KEY in .env): %s", api_key_value)
     app.add_middleware(
         APIKeyAuthMiddleware,
-        api_key=(settings.poly_api_key or None),
+        api_key=api_key_value,
     )
 
+    app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestLoggingMiddleware)
 
     app.include_router(health.router)

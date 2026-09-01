@@ -48,6 +48,7 @@ class Signal:
     strategy: str
     market_id: str
     side: str
+    action: str = "BUY"
     decision: StrategyDecision = StrategyDecision.NO_SIGNAL
 
     model_probability: float | None = None
@@ -57,6 +58,7 @@ class Signal:
 
     reason: str = ""
     signal_id: str = ""
+    token_id: str = ""
     timestamp: str = ""
     feature_snapshot: dict[str, Any] = field(default_factory=dict)
 
@@ -128,7 +130,7 @@ class Strategy(ABC):
     # ── Shared gating helpers ───────────────────────────────────────
 
     def _reject(
-        self, market_id: str, reason: str, side: str = "NO_SIDE"
+        self, market_id: str, reason: str, side: str = "NO_SIDE", token_id: str = ""
     ) -> Signal:
         """Build a ``NO_SIGNAL`` with the given rejection reason."""
         return Signal(
@@ -137,6 +139,7 @@ class Strategy(ABC):
             side=side,
             decision=StrategyDecision.NO_SIGNAL,
             reason=reason,
+            token_id=token_id,
         )
 
     def _candidate(
@@ -149,6 +152,7 @@ class Strategy(ABC):
         reason: str,
         feature_snapshot: dict[str, Any] | None = None,
         gross_edge: float | None = None,
+        token_id: str = "",
     ) -> Signal:
         """Build a ``CANDIDATE`` signal.
 
@@ -165,6 +169,7 @@ class Strategy(ABC):
             confidence=confidence,
             reason=reason,
             feature_snapshot=feature_snapshot or {},
+            token_id=token_id,
         )
 
     def _check_data_quality(

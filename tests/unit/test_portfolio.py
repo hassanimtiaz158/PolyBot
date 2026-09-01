@@ -84,7 +84,10 @@ class TestPortfolioTrackerAddTrade:
         assert pos["side"] == "NO"
         assert pos["size"] == approx(50.0)
         assert pos["average_entry"] == approx(0.55)
-        assert pos["realised_pnl"] == approx(-5.0)
+        # Flipped position starts fresh with realised_pnl=0.0;
+        # the closed position's P&L is already in total_realised_pnl.
+        assert pos["realised_pnl"] == approx(0.0)
+        assert pt.total_realised_pnl() == approx(-5.0)
 
     def test_fee_deducted_from_equity(self) -> None:
         pt = PortfolioTracker(initial_equity=10_000.0)

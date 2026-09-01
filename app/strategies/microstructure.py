@@ -125,6 +125,7 @@ class MicrostructureStrategy(Strategy):
             ),
             feature_snapshot=dict(features),
             gross_edge=gross_edge,
+            token_id=features.get("token_id", ""),
         )
 
     # ── Private helpers ─────────────────────────────────────────────

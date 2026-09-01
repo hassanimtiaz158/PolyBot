@@ -77,6 +77,7 @@ class WebSocketManager:
         self._subscribed_markets: list[str] = []
         self._last_message_time: float = 0.0
         self._reconnect_attempt = 0
+        self._reconnect_task: asyncio.Task[None] | None = None
 
     # ── Public API ──────────────────────────────────────────────────
 
@@ -228,6 +229,10 @@ class WebSocketManager:
         """Reconnect with exponential backoff and jitter."""
         import random
 
+        # Deduplicate: only one reconnect task at a time
+        if self._reconnect_task is not None and not self._reconnect_task.done():
+            return
+
         delay = min(
             RECONNECT_BASE_DELAY * (2**self._reconnect_attempt),
             RECONNECT_MAX_DELAY,
@@ -246,10 +251,10 @@ class WebSocketManager:
         try:
             await self._connect_and_subscribe()
         except Exception:
-            # Schedule another reconnect
+            # Schedule another reconnect (only if not disconnected)
             if self._state not in (ConnectionState.DISCONNECTED,):
                 self._state = ConnectionState.RECONNECTING
-                asyncio.create_task(self._reconnect())
+                self._reconnect_task = asyncio.create_task(self._reconnect())
 
     async def _listen_loop(self) -> None:
         """Continuously read messages from the WebSocket."""
@@ -269,14 +274,16 @@ class WebSocketManager:
                 logger.warning("No WebSocket message for %.0fs", MESSAGE_TIMEOUT)
                 if self._state == ConnectionState.CONNECTED:
                     self._state = ConnectionState.RECONNECTING
-                    asyncio.create_task(self._reconnect())
+                    if self._reconnect_task is None or self._reconnect_task.done():
+                        self._reconnect_task = asyncio.create_task(self._reconnect())
                 break
 
             except Exception as exc:
                 logger.warning("WebSocket receive error: %s", exc)
                 if self._state == ConnectionState.CONNECTED:
                     self._state = ConnectionState.RECONNECTING
-                    asyncio.create_task(self._reconnect())
+                    if self._reconnect_task is None or self._reconnect_task.done():
+                        self._reconnect_task = asyncio.create_task(self._reconnect())
                 break
 
     async def _ping_loop(self) -> None:

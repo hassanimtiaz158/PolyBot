@@ -61,6 +61,8 @@ class OrderRequest:
     size: float
     price: float
     signal_id: str = ""
+    token_id: str = ""
+    action: str = "BUY"
     order_type: str = "MARKET"
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -185,9 +187,11 @@ class ExecutionEngine:
         request = OrderRequest(
             market_id=decision.market_id,
             side=decision.side,
+            action=decision.action,
             size=decision.size,
             price=decision.risk_metrics.get("entry_price", 0.50),
             signal_id=decision.signal_id,
+            token_id=decision.token_id,
         )
 
         # Initialise state machine
@@ -202,9 +206,11 @@ class ExecutionEngine:
             "order_id": order_id,
             "market_id": request.market_id,
             "side": request.side,
+            "action": request.action,
             "size": request.size,
             "price": request.price,
             "signal_id": request.signal_id,
+            "token_id": request.token_id,
         }
 
         # RISK_APPROVED → SUBMITTED
@@ -251,20 +257,20 @@ class ExecutionEngine:
         if adapter_status == "FILLED":
             try:
                 sm.transition(OrderState.FILLED)
-            except ValueError:
-                pass
+            except ValueError as exc:
+                logger.warning("State machine transition to FILLED failed: %s", exc)
             status = "FILLED"
         elif adapter_status == "PARTIALLY_FILLED":
             try:
                 sm.transition(OrderState.PARTIALLY_FILLED)
-            except ValueError:
-                pass
+            except ValueError as exc:
+                logger.warning("State machine transition to PARTIALLY_FILLED failed: %s", exc)
             status = "PARTIALLY_FILLED"
         else:
             try:
                 sm.transition(OrderState.REJECTED)
-            except ValueError:
-                pass
+            except ValueError as exc:
+                logger.warning("State machine transition to REJECTED failed: %s", exc)
             status = "REJECTED"
 
         return OrderResult(

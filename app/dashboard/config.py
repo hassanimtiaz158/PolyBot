@@ -18,6 +18,8 @@ class DashboardSettings(BaseSettings):
     demo: bool = False
     equity_base: float = 10_000.0
     request_timeout_seconds: float = 10.0
+    # Set to True when deploying behind HTTPS reverse proxy
+    use_https: bool = False
 
     model_config = {
         "env_prefix": "DASHBOARD_",

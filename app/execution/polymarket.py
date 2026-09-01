@@ -89,10 +89,11 @@ _CLOB_STATUS_MAP: dict[str, str] = {
     "expired": "CANCELLED",
 }
 
-_SIDE_MAP: dict[str, str] = {
-    "YES": BUY,
-    "NO": SELL,
-}
+# NOTE: _SIDE_MAP removed. On Polymarket, YES/NO is the token type and
+# BUY/SELL is the order direction -- they are orthogonal.  A strategy
+# can BUY YES, BUY NO, SELL YES, or SELL NO.  The order payload now
+# carries an explicit "action" key ("BUY" or "SELL") set by the strategy
+# or pipeline, and token_id determines which token is traded.
 
 # Sentinel distinguishing "credentials argument omitted" from "explicitly
 # passed as None" -- see PolymarketExecution.__init__.
@@ -276,6 +277,7 @@ class PolymarketExecution(ExecutionAdapter):
         self._credentials = credentials if credentials_given else self._load_credentials()
         self._account_state: AccountState | None = None
         self._pending_orders: dict[str, dict[str, Any]] = {}
+        self._max_pending_orders = 500
         self._reconciled = False
         self._client: ClobClient | None = (
             None if credentials_given else self._build_client()
@@ -412,6 +414,7 @@ class PolymarketExecution(ExecutionAdapter):
         order_id = str(order.get("order_id", ""))
         market_id = str(order.get("market_id", ""))
         side = str(order.get("side", "")).upper()
+        action = str(order.get("action", "BUY")).upper()
         size = float(order.get("size", 0))
         price = float(order.get("price", 0))
         token_id = str(order.get("token_id", ""))
@@ -419,8 +422,12 @@ class PolymarketExecution(ExecutionAdapter):
         # -- Pre-flight validation ---------------------------------------
         if not order_id:
             return self._build_rejected(order_id, market_id, side, size, "Missing order_id")
+        if not market_id:
+            return self._build_rejected(order_id, market_id, side, size, "Missing market_id")
         if side not in ("YES", "NO"):
             return self._build_rejected(order_id, market_id, side, size, f"Invalid side: {side}")
+        if action not in ("BUY", "SELL"):
+            return self._build_rejected(order_id, market_id, side, size, f"Invalid action: {action}")
         if size <= 0:
             return self._build_rejected(order_id, market_id, side, size, "Invalid size")
         if price <= 0 or price >= 1:
@@ -443,7 +450,7 @@ class PolymarketExecution(ExecutionAdapter):
 
         # -- Create, sign (EIP-712), and submit via the official SDK -----
         assert self._client is not None  # guaranteed by _run_all_safety_checks
-        clob_side = _SIDE_MAP.get(side, BUY)
+        clob_side = BUY if action == "BUY" else SELL
         order_args = OrderArgs(token_id=token_id, price=price, size=size, side=clob_side)
 
         try:
@@ -501,18 +508,31 @@ class PolymarketExecution(ExecutionAdapter):
             logger.warning("Cannot cancel -- credentials not configured")
             return False
 
-        try:
-            await self._call_client(self._client.cancel, order_id)
-            logger.info("Cancelled order %s", order_id)
+        last_exc: Exception | None = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                await self._call_client(self._client.cancel, order_id)
+                logger.info("Cancelled order %s", order_id)
 
-            if order_id in self._pending_orders:
-                self._pending_orders[order_id]["status"] = "CANCELLED"
+                # Remove from pending orders to allow resubmission
+                self._pending_orders.pop(order_id, None)
 
-            await self._persist_order_status(order_id, "CANCELLED")
-            return True
-        except Exception as exc:
-            logger.warning("Cancel failed for %s: %s", order_id, exc)
-            return False
+                await self._persist_order_status(order_id, "CANCELLED")
+                return True
+            except Exception as exc:
+                last_exc = exc
+                if attempt < MAX_RETRIES - 1:
+                    wait = RETRY_BACKOFF_BASE * (attempt + 1)
+                    logger.warning(
+                        "Cancel failed for %s (attempt %d/%d), retrying in %.1fs: %s",
+                        order_id, attempt + 1, MAX_RETRIES, wait, exc,
+                    )
+                    await asyncio.sleep(wait)
+                else:
+                    logger.warning("Cancel failed for %s after %d attempts: %s", order_id, MAX_RETRIES, exc)
+
+        # Final attempt failed
+        return False
 
     async def status(self, order_id: str) -> dict[str, Any]:
         """Get the current status of an order.
@@ -661,6 +681,16 @@ class PolymarketExecution(ExecutionAdapter):
         }
 
         self._pending_orders[clob_order_id] = order_result
+
+        # Evict oldest completed orders to bound memory usage
+        if len(self._pending_orders) > self._max_pending_orders:
+            completed_statuses = {"FILLED", "CANCELLED", "REJECTED"}
+            to_remove = [
+                oid for oid, o in self._pending_orders.items()
+                if o.get("status") in completed_statuses
+            ][:len(self._pending_orders) - self._max_pending_orders]
+            for oid in to_remove:
+                self._pending_orders.pop(oid, None)
 
         if internal_status == "FILLED" and self._portfolio is not None:
             try:

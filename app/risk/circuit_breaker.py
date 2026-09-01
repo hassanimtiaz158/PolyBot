@@ -193,6 +193,10 @@ class CircuitBreaker:
 
         Returns the new state after evaluation.
         """
+        # Sync daily P&L and consecutive losses from orchestrator
+        self._daily_pnl = daily_pnl
+        self._consecutive_losses = consecutive_losses
+
         if not data_fresh and self._state != BreakerState.HALTED:
             await self.trigger("STALE_DATA", severity="SOFT")
 

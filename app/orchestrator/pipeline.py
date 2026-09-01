@@ -271,7 +271,9 @@ class TradePipeline:
         await self._persist_signal(signal, net_edge=net_edge)
         await self._persist_risk_event(risk_decision)
         await self._persist_order(order_result)
-        await self._update_portfolio(order_result)
+        # NOTE: Portfolio updates are handled by the execution adapter
+        # (add_trade) -- do NOT call update_position here as it would
+        # overwrite the correctly-computed weighted-average entry price.
 
         # Emit position update after fill
         if order_result.filled_size > 0:

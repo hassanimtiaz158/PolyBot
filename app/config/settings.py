@@ -102,6 +102,11 @@ class Settings(BaseSettings):
     # ── API Security ─────────────────────────────────────────────────
     cors_allow_origins: str = ""
 
+    # ── Paper trading simulation ─────────────────────────────────────
+    paper_rejection_rate: float = Field(default=0.01, ge=0.0, le=1.0)
+    paper_latency_ms: float = Field(default=200.0, ge=0.0)
+    paper_fee_rate: float = Field(default=0.05, ge=0.0, le=1.0)
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

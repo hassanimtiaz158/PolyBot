@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -222,8 +223,11 @@ class TestConnect:
         ):
             await manager.connect()
             await _wait_for_listener(manager)
+            # Allow the reconnect task to be scheduled and start
+            await asyncio.sleep(0.05)
 
-            # Should have triggered reconnect
+            # Should have triggered reconnect (via create_task)
+            assert manager._reconnect_task is not None
             mock_reconnect.assert_called_once()
 
         await manager.disconnect()

@@ -183,16 +183,24 @@ class Database:
 
     async def connect(self) -> None:
         """Open (or create) the SQLite database file."""
+        conn = None
         try:
             parent = Path(self.db_path).parent
             if self.db_path != ":memory:" and not parent.exists():
                 parent.mkdir(parents=True, exist_ok=True)
-            self._conn = await aiosqlite.connect(self.db_path)
-            self._conn.row_factory = aiosqlite.Row
-            await self._conn.execute("PRAGMA journal_mode=WAL")
-            await self._conn.execute("PRAGMA foreign_keys=ON")
-            await self._conn.execute("PRAGMA busy_timeout=5000")
+            conn = await aiosqlite.connect(self.db_path)
+            conn.row_factory = aiosqlite.Row
+            await conn.execute("PRAGMA journal_mode=WAL")
+            await conn.execute("PRAGMA foreign_keys=ON")
+            await conn.execute("PRAGMA busy_timeout=5000")
+            self._conn = conn
         except aiosqlite.Error as exc:
+            # Close the connection if it was opened but PRAGMA failed
+            if conn is not None:
+                try:
+                    await conn.close()
+                except Exception:
+                    pass
             raise DatabaseConnectionError(
                 f"Failed to connect to {self.db_path}: {exc}"
             ) from exc

@@ -266,14 +266,17 @@ class PortfolioTracker:
 
         remaining = size - close_size
         if remaining > 0:
-            # Flip: closing order exceeded the position size
+            # Flip: closing order exceeded the position size.
+            # Start fresh realised_pnl = 0 for the new flipped position
+            # (the old position's realised_pnl was already added to
+            # _total_realised_pnl above).
             self._positions[pos["market_id"]] = {
                 "market_id": pos["market_id"],
                 "side": new_side,
                 "size": remaining,
                 "average_entry": price,
                 "current_price": price,
-                "realised_pnl": pos.get("realised_pnl", 0.0),
+                "realised_pnl": 0.0,
                 "unrealised_pnl": 0.0,
                 "strategy": pos.get("strategy", ""),
             }

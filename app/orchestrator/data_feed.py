@@ -128,6 +128,7 @@ class LiveDataFeed:
     async def close(self) -> None:
         """Release the underlying HTTP clients."""
         await self._clob.close()
+        await self._gamma.close()
 
     # -- Internal ----------------------------------------------------
 
